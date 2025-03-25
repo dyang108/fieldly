@@ -1,4 +1,6 @@
 flask==3.0.2
 boto3==1.34.51
 python-dotenv==1.0.1
-werkzeug==3.0.1 
+werkzeug==3.0.1
+pdfplumber==0.10.3
+requests>=2.31.0 

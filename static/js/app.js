@@ -6,58 +6,88 @@ document.addEventListener('DOMContentLoaded', () => {
         delay: 3000
     });
 
+    const submitButton = document.getElementById('submitButton');
+    const clearButton = document.getElementById('clearButton');
+    const clearHistoryButton = document.getElementById('clearHistoryButton');
+    const datasetInput = document.getElementById('datasetName');
+
     // Initialize Dropzone
     Dropzone.autoDiscover = false;
     const myDropzone = new Dropzone("#uploadDropzone", {
         url: "/upload",
-        autoProcessQueue: false,
+        autoProcessQueue: true, // Enable auto upload
+        uploadMultiple: false,
         addRemoveLinks: true,
         parallelUploads: 5,
         maxFilesize: 50, // MB
-        acceptedFiles: ".csv,.json,.txt,.xlsx,.xls,.parquet",
-        dictDefaultMessage: "Drop files here or click to upload",
+        acceptedFiles: ".csv,.json,.txt,.xlsx,.xls,.parquet,.pdf",
+        dictDefaultMessage: "Set dataset name, then drop files here or click to browse",
         dictFileTooBig: "File is too big ({{filesize}}MB). Max filesize: {{maxFilesize}}MB.",
-        dictInvalidFileType: "Invalid file type. Allowed types: CSV, JSON, TXT, Excel, Parquet"
-    });
+        dictInvalidFileType: "Invalid file type. Allowed types: CSV, JSON, TXT, Excel, Parquet, PDF",
+        init: function() {
+            const dz = this;
 
-    // Handle file addition
-    myDropzone.on("addedfile", file => {
-        console.log("File added:", file.name);
-    });
+            // Check dataset name before accepting files
+            this.on("addedfile", function(file) {
+                const dataset = datasetInput.value.trim();
+                if (!dataset) {
+                    this.removeFile(file);
+                    showToast('Please enter a dataset name before uploading files', 'danger');
+                    return;
+                }
+                console.log("File added:", file.name);
+                // Lock dataset name once upload starts
+                datasetInput.disabled = true;
+            });
 
-    // Handle upload success
-    myDropzone.on("success", (file, response) => {
-        const uploadItem = createUploadListItem(file, response.location, true);
-        document.getElementById('uploadList').prepend(uploadItem);
-        showToast('File uploaded successfully', 'success');
-    });
+            this.on("removedfile", function(file) {
+                console.log("File removed:", file.name);
+                // If no more files, unlock dataset name
+                if (this.files.length === 0) {
+                    datasetInput.disabled = false;
+                }
+            });
 
-    // Handle upload error
-    myDropzone.on("error", (file, errorMessage) => {
-        file.previewElement.classList.add('dz-error');
-        showToast(errorMessage.error || 'Upload failed', 'danger');
-    });
+            this.on("sending", function(file, xhr, formData) {
+                console.log("Sending file:", file.name);
+                // Add the dataset parameter to the formData
+                formData.append("dataset", datasetInput.value.trim());
+            });
 
-    // Handle form submission
-    myDropzone.on("sending", (file, xhr, formData) => {
-        const dataset = document.getElementById('datasetName').value.trim();
-        if (!dataset) {
-            showToast('Please enter a dataset name', 'danger');
-            myDropzone.removeFile(file);
-            return;
+            this.on("success", function(file, response) {
+                console.log("File uploaded successfully:", file.name);
+                const uploadItem = createUploadListItem(file, response.location, true);
+                document.getElementById('uploadList').prepend(uploadItem);
+                showToast('File uploaded successfully', 'success');
+            });
+
+            this.on("error", function(file, errorMessage) {
+                console.log("Upload error:", file.name, errorMessage);
+                file.previewElement.classList.add('dz-error');
+                const error = errorMessage.error || (typeof errorMessage === 'string' ? errorMessage : 'Upload failed');
+                showToast(error, 'danger');
+                // If error occurs, allow changing dataset name
+                if (this.files.length === 0) {
+                    datasetInput.disabled = false;
+                }
+            });
+
+            this.on("queuecomplete", function() {
+                console.log("Queue complete");
+            });
         }
-        formData.append('dataset', dataset);
     });
 
-    // Process uploads when files are added
-    myDropzone.on("addedfile", file => {
-        const dataset = document.getElementById('datasetName').value.trim();
-        if (dataset) {
-            myDropzone.processQueue();
-        } else {
-            showToast('Please enter a dataset name', 'danger');
-            myDropzone.removeFile(file);
-        }
+    // Clear button now also unlocks dataset name
+    clearButton.addEventListener('click', () => {
+        myDropzone.removeAllFiles(true);
+        datasetInput.disabled = false;
+    });
+
+    // Handle the clear history button click
+    clearHistoryButton.addEventListener('click', () => {
+        const uploadList = document.getElementById('uploadList');
+        uploadList.innerHTML = '';
     });
 });
 
@@ -68,7 +98,9 @@ function createUploadListItem(file, location, success) {
         <div class="d-flex align-items-center">
             <div class="flex-grow-1">
                 <h6 class="mb-0">${file.name}</h6>
-                <small class="text-muted">${formatFileSize(file.size)}</small>
+                <small class="text-muted">
+                    ${formatFileSize(file.size)} | Location: ${location}
+                </small>
             </div>
             <div class="ms-3">
                 ${success 

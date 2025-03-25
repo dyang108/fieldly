@@ -270,4 +270,80 @@ body {
 
 #schemaResults::-webkit-scrollbar-thumb:hover {
     background: #555;
+}
+
+.dropzone-custom {
+    border: 2px dashed #dee2e6;
+    border-radius: 0.5rem;
+    background: white;
+    min-height: 150px;
+    padding: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: border-color 0.3s ease;
+}
+
+.dropzone-custom:hover {
+    border-color: #0d6efd;
+}
+
+.dropzone-custom .dz-message {
+    margin: 2em 0;
+    text-align: center;
+}
+
+.dropzone-custom .dz-message i {
+    color: #0d6efd;
+    display: block;
+    margin-bottom: 1rem;
+}
+
+.dropzone-custom .dz-preview {
+    margin: 1rem;
+}
+
+.file-item {
+    display: flex;
+    align-items: center;
+    padding: 1rem;
+    border-bottom: 1px solid #dee2e6;
+}
+
+.file-item:last-child {
+    border-bottom: none;
+}
+
+.file-item .file-info {
+    flex-grow: 1;
+}
+
+.file-meta {
+    font-size: 0.875rem;
+    color: #6c757d;
+}
+
+/* Custom scrollbar for schema results */
+#schemaResults {
+    max-height: 500px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+#schemaResults::-webkit-scrollbar {
+    width: 6px;
+}
+
+#schemaResults::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+
+#schemaResults::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 3px;
+}
+
+#schemaResults::-webkit-scrollbar-thumb:hover {
+    background: #555;
 } 
