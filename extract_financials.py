@@ -110,25 +110,82 @@ def create_extraction_prompt(relationships: Dict[str, List[Dict[str, Any]]], pag
     {{
         "companyName": String,
         "reportTitle": String,
-        "year": int,
-        "address": string,
-        "city": string,
-        "state": string,
-        "zip": string,
-        "revenue": int,
-        "operatingExpenses": int,
-        "dividentsPerShare": float,
-        "netIncome": int,
-        "totalAssets": int,
-        "totalLiabilities": int,
-        "cashAndEquivalents": int,
-        "risks": string
+        "reportDate": String,
+        "timePeriods": [
+            {{
+                "period": String,  // e.g., "2023", "2023-12-31", "FY2023"
+                "startDate": String,
+                "endDate": String,
+                "metrics": {{
+                    "revenue": int,
+                    "costOfRevenue": int,
+                    "grossProfit": int,
+                    "operatingExpenses": int,
+                    "operatingIncome": int,
+                    "netIncome": int,
+                    "earningsPerShare": float,
+                    "dividendsPerShare": float,
+                    "totalAssets": int,
+                    "currentAssets": int,
+                    "cashAndEquivalents": int,
+                    "accountsReceivable": int,
+                    "inventory": int,
+                    "totalLiabilities": int,
+                    "currentLiabilities": int,
+                    "longTermDebt": int,
+                    "totalEquity": int,
+                    "workingCapital": int,
+                    "operatingCashFlow": int,
+                    "investingCashFlow": int,
+                    "financingCashFlow": int,
+                    "freeCashFlow": int,
+                    "debtToEquityRatio": float,
+                    "currentRatio": float,
+                    "quickRatio": float,
+                    "returnOnEquity": float,
+                    "returnOnAssets": float,
+                    "grossProfitMargin": float,
+                    "operatingMargin": float,
+                    "netProfitMargin": float,
+                    "assetTurnover": float,
+                    "inventoryTurnover": float,
+                    "daysSalesOutstanding": float,
+                    "daysInventoryOutstanding": float,
+                    "daysPayableOutstanding": float,
+                    "cashConversionCycle": float
+                }},
+                "forwardLookingCapex": [
+                    {{
+                        "period": String,  // The future period this capex is planned for
+                        "amount": int,     // Amount in dollars
+                        "source": {{
+                            "text": String,    // The exact quotation from the text
+                            "page": int,       // The page number where this was found
+                            "context": String  // Brief context about what the capex is for
+                        }}
+                    }}
+                ]
+            }}
+        ],
+        "address": {{
+            "street": String,
+            "city": String,
+            "state": String,
+            "zip": String,
+            "country": String
+        }},
+        "risks": String,
+        "notes": String
     }}
 
     For numerical values, extract only the number (remove currency symbols and commas).
-    For text blocks that appear to be risks, concatenate them into a single string.
+    For text blocks that appear to be risks or notes, concatenate them into a single string.
     If a value is not found on this page, use null.
     Only extract information that appears on this specific page.
+    Pay special attention to the units of the values. It is common for values to be in thousands or millions.
+    Also pay special attention to the alignment of the blocks. It is uncommon for values to be aligned diagonally.
+    For forwardLookingCapex, look for statements about future capital expenditures, planned investments, or infrastructure spending.
+    Include the exact quotation and context to help verify the source of the information.
     IMPORTANT: Your response must be a valid JSON object matching the schema above.
 
     Text blocks from page {page_num}:
@@ -147,34 +204,80 @@ def create_extraction_prompt(relationships: Dict[str, List[Dict[str, Any]]], pag
 
 def merge_page_data(pages_data: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Merge extracted data from multiple pages, taking the first non-null value for each field."""
-    merged = {}
+    merged = {
+        "companyName": None,
+        "reportTitle": None,
+        "reportDate": None,
+        "timePeriods": [],
+        "address": {
+            "street": None,
+            "city": None,
+            "state": None,
+            "zip": None,
+            "country": None
+        },
+        "risks": None,
+        "notes": None
+    }
     
-    # Define fields and their types
-    string_fields = ['companyName', 'reportTitle', 'address', 'city', 'state', 'zip']
-    numeric_fields = ['year', 'revenue', 'operatingExpenses', 'netIncome', 
-                     'totalAssets', 'totalLiabilities', 'cashAndEquivalents']
-    float_fields = ['dividentsPerShare']
-    text_fields = ['risks']
+    # Handle basic fields
+    for page in pages_data:
+        if not merged["companyName"] and page.get("companyName"):
+            merged["companyName"] = page["companyName"]
+        if not merged["reportTitle"] and page.get("reportTitle"):
+            merged["reportTitle"] = page["reportTitle"]
+        if not merged["reportDate"] and page.get("reportDate"):
+            merged["reportDate"] = page["reportDate"]
+        if not merged["risks"] and page.get("risks"):
+            merged["risks"] = page["risks"]
+        if not merged["notes"] and page.get("notes"):
+            merged["notes"] = page["notes"]
+        
+        # Handle address fields
+        if page.get("address"):
+            for field in ["street", "city", "state", "zip", "country"]:
+                if not merged["address"][field] and page["address"].get(field):
+                    merged["address"][field] = page["address"][field]
     
-    # Handle string fields
-    for field in string_fields:
-        values = [page.get(field) for page in pages_data if page.get(field)]
-        merged[field] = values[0] if values else None
+    # Handle time periods
+    all_periods = {}
+    for page in pages_data:
+        if not page.get("timePeriods"):
+            continue
+            
+        for period_data in page["timePeriods"]:
+            period = period_data.get("period")
+            if not period:
+                continue
+                
+            if period not in all_periods:
+                all_periods[period] = {
+                    "period": period,
+                    "startDate": period_data.get("startDate"),
+                    "endDate": period_data.get("endDate"),
+                    "metrics": {},
+                    "forwardLookingCapex": []
+                }
+            
+            # Merge metrics
+            metrics = period_data.get("metrics", {})
+            for metric, value in metrics.items():
+                if value is not None and metric not in all_periods[period]["metrics"]:
+                    all_periods[period]["metrics"][metric] = value
+            
+            # Merge forwardLookingCapex
+            if period_data.get("forwardLookingCapex"):
+                # Only add if we don't already have an entry for this period and amount
+                existing_periods = {c["period"]: c["amount"] for c in all_periods[period]["forwardLookingCapex"]}
+                for capex in period_data["forwardLookingCapex"]:
+                    if capex["period"] not in existing_periods or existing_periods[capex["period"]] != capex["amount"]:
+                        all_periods[period]["forwardLookingCapex"].append(capex)
     
-    # Handle numeric fields
-    for field in numeric_fields:
-        values = [page.get(field) for page in pages_data if page.get(field) is not None]
-        merged[field] = values[0] if values else None
-    
-    # Handle float fields
-    for field in float_fields:
-        values = [page.get(field) for page in pages_data if page.get(field) is not None]
-        merged[field] = values[0] if values else None
-    
-    # Concatenate text fields (like risks) from all pages
-    for field in text_fields:
-        values = [page.get(field) for page in pages_data if page.get(field)]
-        merged[field] = ' '.join(values) if values else None
+    # Convert periods dict to list and sort by period
+    merged["timePeriods"] = sorted(
+        list(all_periods.values()),
+        key=lambda x: x["period"]
+    )
     
     return merged
 
@@ -189,22 +292,72 @@ def clean_llm_response(response: str) -> Dict[str, Any]:
         data = json.loads(json_str)
         
         # Convert numeric strings to numbers where appropriate
-        numeric_fields = ['year', 'revenue', 'operatingExpenses', 'dividentsPerShare', 
-                         'netIncome', 'totalAssets', 'totalLiabilities', 'cashAndEquivalents']
+        int_fields = [
+            'revenue', 'costOfRevenue', 'grossProfit', 'operatingExpenses',
+            'operatingIncome', 'netIncome', 'totalAssets', 'currentAssets',
+            'cashAndEquivalents', 'accountsReceivable', 'inventory',
+            'totalLiabilities', 'currentLiabilities', 'longTermDebt',
+            'totalEquity', 'workingCapital', 'operatingCashFlow',
+            'investingCashFlow', 'financingCashFlow', 'freeCashFlow'
+        ]
         
-        for field in numeric_fields:
-            if isinstance(data.get(field), str):
-                # Remove currency symbols, commas, and convert to number
-                value = data[field]
-                if value:
-                    value = re.sub(r'[^\d.-]', '', value)
-                    try:
-                        if field == 'dividentsPerShare':
-                            data[field] = float(value) if value else None
-                        else:
-                            data[field] = int(float(value)) if value else None
-                    except (ValueError, TypeError):
-                        data[field] = None
+        float_fields = [
+            'earningsPerShare', 'dividendsPerShare', 'debtToEquityRatio',
+            'currentRatio', 'quickRatio', 'returnOnEquity', 'returnOnAssets',
+            'grossProfitMargin', 'operatingMargin', 'netProfitMargin',
+            'assetTurnover', 'inventoryTurnover', 'daysSalesOutstanding',
+            'daysInventoryOutstanding', 'daysPayableOutstanding', 'cashConversionCycle'
+        ]
+        
+        # Process time periods
+        if 'timePeriods' in data:
+            for period in data['timePeriods']:
+                if 'metrics' in period:
+                    metrics = period['metrics']
+                    # Convert integer fields
+                    for field in int_fields:
+                        if isinstance(metrics.get(field), str):
+                            value = metrics[field]
+                            if value:
+                                value = re.sub(r'[^\d.-]', '', value)
+                                try:
+                                    metrics[field] = int(float(value))
+                                except (ValueError, TypeError):
+                                    metrics[field] = None
+                    
+                    # Convert float fields
+                    for field in float_fields:
+                        if isinstance(metrics.get(field), str):
+                            value = metrics[field]
+                            if value:
+                                value = re.sub(r'[^\d.-]', '', value)
+                                try:
+                                    metrics[field] = float(value)
+                                except (ValueError, TypeError):
+                                    metrics[field] = None
+                
+                # Process forwardLookingCapex
+                if 'forwardLookingCapex' in period:
+                    for capex in period['forwardLookingCapex']:
+                        # Convert amount to integer
+                        if isinstance(capex.get('amount'), str):
+                            value = capex['amount']
+                            if value:
+                                value = re.sub(r'[^\d.-]', '', value)
+                                try:
+                                    capex['amount'] = int(float(value))
+                                except (ValueError, TypeError):
+                                    capex['amount'] = None
+                        
+                        # Ensure source fields are present
+                        if 'source' not in capex:
+                            capex['source'] = {}
+                        if 'text' not in capex['source']:
+                            capex['source']['text'] = None
+                        if 'page' not in capex['source']:
+                            capex['source']['page'] = None
+                        if 'context' not in capex['source']:
+                            capex['source']['context'] = None
         
         return data
     
@@ -215,6 +368,11 @@ def clean_llm_response(response: str) -> Dict[str, Any]:
 def process_relationships_file(input_file: Path, output_file: Path, model: str):
     """Process a single relationships file through the LLM."""
     try:
+        # Skip if output file already exists
+        if output_file.exists():
+            logger.info(f"Skipping {input_file.name} - output already exists")
+            return
+            
         # Read relationships file
         with open(input_file, 'r', encoding='utf-8') as f:
             data = json.load(f)

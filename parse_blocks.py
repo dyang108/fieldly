@@ -93,9 +93,9 @@ def find_block_relationships(blocks: List[Dict[str, Any]],
                 
             relationships = []
             
-            # Look at nearby blocks (within a window)
-            start_idx = max(0, i - 10)
-            end_idx = min(len(page_blocks), i + 10)
+            # Look at a larger window of blocks (increased from ±10 to ±20)
+            start_idx = max(0, i - 20)
+            end_idx = min(len(page_blocks), i + 20)
             
             for j in range(start_idx, end_idx):
                 if i == j:
@@ -108,27 +108,91 @@ def find_block_relationships(blocks: List[Dict[str, Any]],
                 
                 distance, angle = calculate_distance_and_angle(block1, block2)
                 
-                if are_blocks_aligned(angle, distance, 
-                                    horizontal_tolerance, 
-                                    vertical_tolerance,
-                                    max_distance):
-                    relationship = {
-                        'text': text2,
-                        'distance': distance,  # Already rounded in calculate_distance_and_angle
-                        'angle': angle,        # Already rounded in calculate_distance_and_angle
-                        'alignment': 'horizontal' if angle < 45 or angle > 315 or (135 < angle < 225) else 'vertical',
-                        'coordinates': {
-                            'x0': round(block2['x0']),
-                            'x1': round(block2['x1']),
-                            'top': round(block2['top']),
-                            'bottom': round(block2['bottom'])
+                # Normalize angle to 0-360
+                angle = angle % 360
+                
+                # Determine relationship type based on angle and distance
+                if distance <= max_distance:
+                    # Check for horizontal alignment (near 0° or 180°)
+                    if angle < horizontal_tolerance or abs(angle - 180) < horizontal_tolerance:
+                        relationship = {
+                            'text': text2,
+                            'distance': distance,
+                            'angle': angle,
+                            'alignment': 'horizontal',
+                            'type': 'same_line',
+                            'coordinates': {
+                                'x0': round(block2['x0']),
+                                'x1': round(block2['x1']),
+                                'top': round(block2['top']),
+                                'bottom': round(block2['bottom'])
+                            }
                         }
-                    }
-                    relationships.append(relationship)
+                        relationships.append(relationship)
+                    
+                    # Check for vertical alignment (near 90° or 270°)
+                    elif abs(angle - 90) < vertical_tolerance or abs(angle - 270) < vertical_tolerance:
+                        relationship = {
+                            'text': text2,
+                            'distance': distance,
+                            'angle': angle,
+                            'alignment': 'vertical',
+                            'type': 'same_column',
+                            'coordinates': {
+                                'x0': round(block2['x0']),
+                                'x1': round(block2['x1']),
+                                'top': round(block2['top']),
+                                'bottom': round(block2['bottom'])
+                            }
+                        }
+                        relationships.append(relationship)
+                    
+                    # Check for diagonal relationships (45°, 135°, 225°, 315°)
+                    elif any(abs(angle - a) < 15 for a in [45, 135, 225, 315]):
+                        relationship = {
+                            'text': text2,
+                            'distance': distance,
+                            'angle': angle,
+                            'alignment': 'diagonal',
+                            'type': 'diagonal_relation',
+                            'coordinates': {
+                                'x0': round(block2['x0']),
+                                'x1': round(block2['x1']),
+                                'top': round(block2['top']),
+                                'bottom': round(block2['bottom'])
+                            }
+                        }
+                        relationships.append(relationship)
+                    
+                    # Check for nearby blocks regardless of alignment
+                    elif distance < max_distance / 2:
+                        relationship = {
+                            'text': text2,
+                            'distance': distance,
+                            'angle': angle,
+                            'alignment': 'proximate',
+                            'type': 'nearby',
+                            'coordinates': {
+                                'x0': round(block2['x0']),
+                                'x1': round(block2['x1']),
+                                'top': round(block2['top']),
+                                'bottom': round(block2['bottom'])
+                            }
+                        }
+                        relationships.append(relationship)
             
-            # Only keep the closest relationships
+            # Sort relationships by distance and type priority
             if relationships:
-                relationships.sort(key=lambda x: x['distance'])
+                # Define type priorities (lower number = higher priority)
+                type_priority = {
+                    'same_line': 1,
+                    'same_column': 2,
+                    'diagonal_relation': 3,
+                    'nearby': 4
+                }
+                
+                # Sort by type priority first, then by distance
+                relationships.sort(key=lambda x: (type_priority.get(x['type'], 5), x['distance']))
                 relationships = relationships[:max_relationships_per_block]
                 page_relationships[text1] = relationships
         
@@ -143,8 +207,16 @@ def process_blocks_file(input_file: Path, output_file: Path,
                        horizontal_tolerance: float = 10,
                        vertical_tolerance: float = 10,
                        max_relationships_per_block: int = 5):
-    """Process a single blocks JSON file and find spatial relationships."""
+    """Process a single blocks file and find relationships."""
     try:
+        # Skip if output file already exists
+        if output_file.exists():
+            logger.info(f"Skipping {input_file.name} - output already exists")
+            return
+            
+        logger.info(f"Processing {input_file.name}...")
+        
+        # Read blocks file
         with open(input_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
@@ -152,8 +224,8 @@ def process_blocks_file(input_file: Path, output_file: Path,
             logger.warning(f"No blocks found in {input_file}")
             return
         
-        # Find relationships between blocks, organized by page
-        relationships_by_page = find_block_relationships(
+        # Find relationships
+        relationships = find_block_relationships(
             data['blocks'],
             max_distance=max_distance,
             horizontal_tolerance=horizontal_tolerance,
@@ -161,16 +233,14 @@ def process_blocks_file(input_file: Path, output_file: Path,
             max_relationships_per_block=max_relationships_per_block
         )
         
-        # Save relationships to output file
+        # Save relationships
         with open(output_file, 'w', encoding='utf-8') as f:
             json.dump({
                 'filename': data['filename'],
-                'total_pages': len(relationships_by_page),
-                'relationships_by_page': relationships_by_page
+                'relationships_by_page': relationships
             }, f, indent=2, ensure_ascii=False)
         
         logger.info(f"Processed {input_file.name} -> {output_file.name}")
-        logger.info(f"Found relationships on {len(relationships_by_page)} pages")
         
     except Exception as e:
         logger.error(f"Error processing {input_file}: {str(e)}")

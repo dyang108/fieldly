@@ -154,6 +154,31 @@ def process_dataset(dataset_name: str):
         except Exception as e:
             logger.error(f"Error saving blocks for {pdf_path.name}: {str(e)}")
 
+def process_pdf_file(input_file: Path, output_file: Path):
+    """Process a single PDF file and extract text blocks."""
+    try:
+        # Skip if output file already exists
+        if output_file.exists():
+            logger.info(f"Skipping {input_file.name} - output already exists")
+            return
+            
+        logger.info(f"Processing {input_file.name}...")
+        
+        # Extract text blocks
+        blocks = extract_blocks_from_pdf(str(input_file))
+        
+        # Save blocks
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump({
+                'filename': input_file.name,
+                'blocks': blocks
+            }, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"Processed {input_file.name} -> {output_file.name}")
+        
+    except Exception as e:
+        logger.error(f"Error processing {input_file}: {str(e)}")
+
 def main():
     parser = argparse.ArgumentParser(description='Process PDFs and extract text blocks')
     parser.add_argument('dataset', help='Name of the dataset directory under .data/')
