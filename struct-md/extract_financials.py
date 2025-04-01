@@ -108,116 +108,69 @@ def extract_json_from_response(response: str) -> Optional[Dict[str, Any]]:
             logger.error(f"Failed to parse JSON from response: {str(e)}")
             return None
 
-def split_content_into_chunks(content: str, max_chunk_size: int = 4000) -> List[str]:
-    """Split markdown content into smaller chunks while preserving structure."""
-    chunks = []
-    current_chunk = []
-    current_size = 0
-    
-    # Split by sections (headers) and paragraphs
-    sections = content.split('\n#')
-    
-    for section in sections:
-        if not section.strip():
-            continue
-            
-        # If this is not the first section, add back the header
-        if chunks:
-            section = '#' + section
-            
-        section_size = len(section)
-        
-        # If section is too large, split it by paragraphs
-        if section_size > max_chunk_size:
-            paragraphs = section.split('\n\n')
-            current_section = []
-            current_section_size = 0
-            
-            for para in paragraphs:
-                para_size = len(para)
-                
-                # If adding this paragraph would exceed max size, start a new chunk
-                if current_section_size + para_size > max_chunk_size and current_section:
-                    chunks.append('\n\n'.join(current_section))
-                    current_section = []
-                    current_section_size = 0
-                
-                current_section.append(para)
-                current_section_size += para_size
-            
-            # Add the last section chunk if it exists
-            if current_section:
-                chunks.append('\n\n'.join(current_section))
-        else:
-            # If section fits within max size, add it as is
-            chunks.append(section)
-    
-    return chunks
-
 def create_extraction_prompt(markdown_content: str, page_num: int) -> str:
     """Create a prompt for the LLM to extract structured data from markdown content."""
     return f"""Extract structured financial data from the following markdown content from page {page_num}.
-Note that this is only a portion of the document, so it's perfectly fine to return null values for fields that aren't present in this section.
 The response must be a valid JSON object matching this schema:
 {{
-    "companyName": {{"value": "string or null", "confidence": "number between 0 and 1"}},
-    "reportTitle": {{"value": "string or null", "confidence": "number between 0 and 1"}},
-    "reportDate": {{"value": "string or null", "confidence": "number between 0 and 1"}},
+    "companyName": "string or null",
+    "reportTitle": "string or null",
+    "reportDate": "string or null",
     "timePeriods": [
         {{
             "period": "string",
-            "startDate": {{"value": "string or null", "confidence": "number between 0 and 1"}},
-            "endDate": {{"value": "string or null", "confidence": "number between 0 and 1"}},
+            "startDate": "string or null",
+            "endDate": "string or null",
             "metrics": {{
-                "revenue": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "costOfRevenue": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "grossProfit": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "operatingIncome": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "netIncome": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "eps": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "dilutedEps": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "ebitda": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "operatingCashFlow": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "freeCashFlow": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "capitalExpenditure": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "totalAssets": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "totalLiabilities": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "totalEquity": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "currentAssets": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "currentLiabilities": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "cashAndEquivalents": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "longTermDebt": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "shortTermDebt": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "inventory": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "accountsReceivable": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "accountsPayable": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "depreciation": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "amortization": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "stockBasedCompensation": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "deferredTax": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "deferredRevenue": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "workingCapital": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "operatingMargin": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "profitMargin": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "returnOnEquity": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "returnOnAssets": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "debtToEquity": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "currentRatio": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "quickRatio": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "inventoryTurnover": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "assetTurnover": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "daysSalesOutstanding": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "daysInventoryOutstanding": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "daysPayablesOutstanding": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "operatingCycle": {{"value": "number or null", "confidence": "number between 0 and 1"}},
-                "cashConversionCycle": {{"value": "number or null", "confidence": "number between 0 and 1"}}
+                "revenue": "number or null",
+                "costOfRevenue": "number or null",
+                "grossProfit": "number or null",
+                "operatingIncome": "number or null",
+                "netIncome": "number or null",
+                "eps": "number or null",
+                "dilutedEps": "number or null",
+                "ebitda": "number or null",
+                "operatingCashFlow": "number or null",
+                "freeCashFlow": "number or null",
+                "capitalExpenditure": "number or null",
+                "totalAssets": "number or null",
+                "totalLiabilities": "number or null",
+                "totalEquity": "number or null",
+                "currentAssets": "number or null",
+                "currentLiabilities": "number or null",
+                "cashAndEquivalents": "number or null",
+                "longTermDebt": "number or null",
+                "shortTermDebt": "number or null",
+                "inventory": "number or null",
+                "accountsReceivable": "number or null",
+                "accountsPayable": "number or null",
+                "depreciation": "number or null",
+                "amortization": "number or null",
+                "stockBasedCompensation": "number or null",
+                "deferredTax": "number or null",
+                "deferredRevenue": "number or null",
+                "workingCapital": "number or null",
+                "operatingMargin": "number or null",
+                "profitMargin": "number or null",
+                "returnOnEquity": "number or null",
+                "returnOnAssets": "number or null",
+                "debtToEquity": "number or null",
+                "currentRatio": "number or null",
+                "quickRatio": "number or null",
+                "inventoryTurnover": "number or null",
+                "assetTurnover": "number or null",
+                "daysSalesOutstanding": "number or null",
+                "daysInventoryOutstanding": "number or null",
+                "daysPayablesOutstanding": "number or null",
+                "operatingCycle": "number or null",
+                "cashConversionCycle": "number or null"
             }}
         }}
     ],
     "forwardLookingCapex": [
         {{
             "period": "string",
-            "amount": {{"value": "number", "confidence": "number between 0 and 1"}},
+            "amount": "number",
             "source": {{
                 "text": "string",
                 "page": "number",
@@ -226,14 +179,14 @@ The response must be a valid JSON object matching this schema:
         }}
     ],
     "address": {{
-        "street": {{"value": "string or null", "confidence": "number between 0 and 1"}},
-        "city": {{"value": "string or null", "confidence": "number between 0 and 1"}},
-        "state": {{"value": "string or null", "confidence": "number between 0 and 1"}},
-        "zip": {{"value": "string or null", "confidence": "number between 0 and 1"}},
-        "country": {{"value": "string or null", "confidence": "number between 0 and 1"}}
+        "street": "string or null",
+        "city": "string or null",
+        "state": "string or null",
+        "zip": "string or null",
+        "country": "string or null"
     }},
-    "risks": {{"value": "string or null", "confidence": "number between 0 and 1"}},
-    "notes": {{"value": "string or null", "confidence": "number between 0 and 1"}}
+    "risks": "string or null",
+    "notes": "string or null"
 }}
 
 Markdown content:
@@ -243,15 +196,6 @@ Extract all relevant information and return it as a valid JSON object. Include o
 For numeric values, convert all numbers to their numeric form (not strings).
 For dates, use ISO format (YYYY-MM-DD).
 For the forwardLookingCapex entries, include the exact text where you found the information and its context.
-Assign confidence scores based on:
-- 1.0: Direct, explicit statements with clear context
-- 0.9: Clear statements with some context
-- 0.8: Statements that need minor interpretation
-- 0.7: Statements that need moderate interpretation
-- 0.6: Statements that need significant interpretation
-- 0.5: Statements with high uncertainty
-
-Remember that this is only a portion of the document, so it's perfectly fine to return null values for fields that aren't present in this section.
 """
 
 def clean_llm_response(response: str) -> Dict[str, Any]:
@@ -266,19 +210,17 @@ def clean_llm_response(response: str) -> Dict[str, Any]:
         # Convert numeric fields from strings to numbers
         def convert_numeric(obj):
             if isinstance(obj, dict):
-                if "value" in obj and "confidence" in obj:
-                    # Handle value-confidence pairs
-                    try:
-                        if isinstance(obj["value"], str):
-                            # Remove currency symbols and commas
-                            cleaned = obj["value"].replace('$', '').replace(',', '')
-                            obj["value"] = float(cleaned)
-                        return obj
-                    except ValueError:
-                        return obj
                 return {k: convert_numeric(v) for k, v in obj.items()}
             elif isinstance(obj, list):
                 return [convert_numeric(item) for item in obj]
+            elif isinstance(obj, str):
+                # Try to convert to number if it looks like one
+                try:
+                    # Remove currency symbols and commas
+                    cleaned = obj.replace('$', '').replace(',', '')
+                    return float(cleaned)
+                except ValueError:
+                    return obj
             return obj
         
         return convert_numeric(data)
@@ -288,37 +230,42 @@ def clean_llm_response(response: str) -> Dict[str, Any]:
         return {}
 
 def merge_page_data(pages_data: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Merge extracted data from multiple pages, taking the highest confidence value for each field."""
+    """Merge extracted data from multiple pages, taking the first non-null value for each field."""
     merged = {
-        "companyName": {"value": None, "confidence": 0},
-        "reportTitle": {"value": None, "confidence": 0},
-        "reportDate": {"value": None, "confidence": 0},
+        "companyName": None,
+        "reportTitle": None,
+        "reportDate": None,
         "timePeriods": [],
         "forwardLookingCapex": [],
         "address": {
-            "street": {"value": None, "confidence": 0},
-            "city": {"value": None, "confidence": 0},
-            "state": {"value": None, "confidence": 0},
-            "zip": {"value": None, "confidence": 0},
-            "country": {"value": None, "confidence": 0}
+            "street": None,
+            "city": None,
+            "state": None,
+            "zip": None,
+            "country": None
         },
-        "risks": {"value": None, "confidence": 0},
-        "notes": {"value": None, "confidence": 0}
+        "risks": None,
+        "notes": None
     }
     
     # Handle basic fields
     for page in pages_data:
-        for field in ["companyName", "reportTitle", "reportDate", "risks", "notes"]:
-            if page.get(field) and isinstance(page[field], dict):
-                if page[field]["confidence"] > merged[field]["confidence"]:
-                    merged[field] = page[field]
+        if not merged["companyName"] and page.get("companyName"):
+            merged["companyName"] = page["companyName"]
+        if not merged["reportTitle"] and page.get("reportTitle"):
+            merged["reportTitle"] = page["reportTitle"]
+        if not merged["reportDate"] and page.get("reportDate"):
+            merged["reportDate"] = page["reportDate"]
+        if not merged["risks"] and page.get("risks"):
+            merged["risks"] = page["risks"]
+        if not merged["notes"] and page.get("notes"):
+            merged["notes"] = page["notes"]
         
         # Handle address fields
         if page.get("address"):
             for field in ["street", "city", "state", "zip", "country"]:
-                if page["address"].get(field) and isinstance(page["address"][field], dict):
-                    if page["address"][field]["confidence"] > merged["address"][field]["confidence"]:
-                        merged["address"][field] = page["address"][field]
+                if not merged["address"][field] and page["address"].get(field):
+                    merged["address"][field] = page["address"][field]
     
     # Handle time periods
     all_periods = {}
@@ -334,24 +281,16 @@ def merge_page_data(pages_data: List[Dict[str, Any]]) -> Dict[str, Any]:
             if period not in all_periods:
                 all_periods[period] = {
                     "period": period,
-                    "startDate": {"value": None, "confidence": 0},
-                    "endDate": {"value": None, "confidence": 0},
+                    "startDate": period_data.get("startDate"),
+                    "endDate": period_data.get("endDate"),
                     "metrics": {}
                 }
             
-            # Merge dates
-            for date_field in ["startDate", "endDate"]:
-                if period_data.get(date_field) and isinstance(period_data[date_field], dict):
-                    if period_data[date_field]["confidence"] > all_periods[period][date_field]["confidence"]:
-                        all_periods[period][date_field] = period_data[date_field]
-            
             # Merge metrics
             metrics = period_data.get("metrics", {})
-            for metric, value_data in metrics.items():
-                if isinstance(value_data, dict):
-                    if metric not in all_periods[period]["metrics"] or \
-                       value_data["confidence"] > all_periods[period]["metrics"][metric]["confidence"]:
-                        all_periods[period]["metrics"][metric] = value_data
+            for metric, value in metrics.items():
+                if value is not None and metric not in all_periods[period]["metrics"]:
+                    all_periods[period]["metrics"][metric] = value
     
     # Convert periods dict to list and sort by period
     merged["timePeriods"] = sorted(
@@ -373,14 +312,14 @@ def merge_page_data(pages_data: List[Dict[str, Any]]) -> Dict[str, Any]:
                     continue
                     
                 period = capex.get("period")
-                amount_data = capex.get("amount")
+                amount = capex.get("amount")
                 
-                if not period or not isinstance(amount_data, dict):
+                if not period or amount is None:
                     logger.warning(f"Missing required fields in capex entry: {capex}")
                     continue
                 
                 # Create a unique key for this capex entry
-                key = f"{period}_{amount_data['value']}"
+                key = f"{period}_{amount}"
                 
                 # Ensure source field exists with default values
                 if "source" not in capex:
@@ -405,7 +344,7 @@ def merge_page_data(pages_data: List[Dict[str, Any]]) -> Dict[str, Any]:
                 if "context" not in source:
                     source["context"] = ""
                 
-                if key not in all_capex or amount_data["confidence"] > all_capex[key]["amount"]["confidence"]:
+                if key not in all_capex:
                     all_capex[key] = capex
                     
             except Exception as e:
@@ -420,28 +359,51 @@ def merge_page_data(pages_data: List[Dict[str, Any]]) -> Dict[str, Any]:
     
     return merged
 
-def print_accumulated_data(data: Dict[str, Any], pdf_name: str, page_num: int, chunk_num: int, total_chunks: int, indent: int = 0) -> None:
+def split_content_into_chunks(content: str, max_chunk_size: int = 4000) -> List[str]:
+    """Split markdown content into smaller chunks while preserving structure."""
+    chunks = []
+    current_chunk = []
+    current_size = 0
+    
+    # Split by paragraphs
+    paragraphs = content.split('\n\n')
+    
+    for para in paragraphs:
+        para_size = len(para)
+        
+        # If adding this paragraph would exceed max size, start a new chunk
+        if current_size + para_size > max_chunk_size and current_chunk:
+            chunks.append('\n\n'.join(current_chunk))
+            current_chunk = []
+            current_size = 0
+        
+        current_chunk.append(para)
+        current_size += para_size
+    
+    # Add the last chunk if it exists
+    if current_chunk:
+        chunks.append('\n\n'.join(current_chunk))
+    
+    return chunks
+
+def print_accumulated_data(data: Dict[str, Any], indent: int = 0) -> None:
     """Print accumulated data, excluding null values."""
     indent_str = "  " * indent
     for key, value in data.items():
-        if value is None or (isinstance(value, dict) and value.get("value") is None):
+        if value is None:
             continue
             
         if isinstance(value, dict):
-            if "value" in value and "confidence" in value:
-                # Handle value-confidence pairs
-                if value["value"] is not None:
-                    print(f"{indent_str}{key}: {value['value']} (confidence: {value['confidence']:.2f})")
-            elif any(v is not None and (not isinstance(v, dict) or v.get("value") is not None) for v in value.values()):
+            if any(v is not None for v in value.values()):
                 print(f"{indent_str}{key}:")
-                print_accumulated_data(value, pdf_name, page_num, chunk_num, total_chunks, indent + 1)
+                print_accumulated_data(value, indent + 1)
         elif isinstance(value, list):
             if value:
                 print(f"{indent_str}{key}:")
                 for item in value:
                     if isinstance(item, dict):
                         print(f"{indent_str}  -")
-                        print_accumulated_data(item, pdf_name, page_num, chunk_num, total_chunks, indent + 2)
+                        print_accumulated_data(item, indent + 2)
                     else:
                         print(f"{indent_str}  {item}")
         else:
@@ -557,8 +519,8 @@ def process_markdown_file(input_file: Path, output_file: Path, model: str, use_d
                             page_data["forwardLookingCapex"].append(capex)
                     
                     # Print accumulated data after each chunk
-                    print(f"\nProcessing {input_file.name} - Page {page_num}, Chunk {chunk_num}/{len(chunks)}")
-                    print_accumulated_data(page_data, input_file.name, page_num, chunk_num, len(chunks))
+                    print(f"\nAccumulated data after chunk {chunk_num}:")
+                    print_accumulated_data(page_data)
                     print("\n" + "="*80 + "\n")
                 else:
                     logger.error(f"Failed to extract structured data from chunk {chunk_num}")
