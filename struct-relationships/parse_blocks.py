@@ -251,7 +251,7 @@ def process_dataset(dataset_name: str,
                    vertical_tolerance: float = 10,
                    max_relationships_per_block: int = 5):
     """Process all block files in a dataset."""
-    data_dir = Path('.data')
+    data_dir = Path('../.data')
     input_dir = data_dir / f"{dataset_name}-parsed"
     output_dir = data_dir / f"{dataset_name}-relationships"
     

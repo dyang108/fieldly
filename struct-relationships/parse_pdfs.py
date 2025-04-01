@@ -106,7 +106,7 @@ def process_dataset(dataset_name: str):
     Process all PDFs in a dataset directory and save extracted blocks.
     """
     # Setup paths
-    data_dir = Path('.data')
+    data_dir = Path('../.data')
     input_dir = data_dir / dataset_name
     output_dir = data_dir / f"{dataset_name}-parsed"
     

@@ -464,7 +464,7 @@ def process_relationships_file(input_file: Path, output_file: Path, model: str, 
 
 def process_dataset(dataset_name: str, model: str = "deepseek-r1:14b", use_deepseek: bool = False, api_key: Optional[str] = None):
     """Process all relationship files in a dataset."""
-    data_dir = Path('.data')
+    data_dir = Path('../.data')
     input_dir = data_dir / f"{dataset_name}-relationships"
     output_dir = data_dir / f"{dataset_name}-extracted"
     
