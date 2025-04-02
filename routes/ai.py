@@ -1,5 +1,5 @@
 import logging
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 
 from ai import create_schema_generator
 
@@ -21,20 +21,20 @@ def generate_schema():
         ai_config = {}
         
         # Check if local model should be used
-        use_local_model = request.app.config.get('USE_LOCAL_MODEL', 'false').lower() == 'true'
+        use_local_model = current_app.config.get('USE_LOCAL_MODEL', 'false').lower() == 'true'
         
         if use_local_model:
             ai_type = 'deepseek_local'
             ai_config = {
-                'model': request.app.config.get('OLLAMA_MODEL', 'deepseek-r1:14b'),
-                'api_url': request.app.config.get('OLLAMA_API_URL', 'http://localhost:11434/api/chat')
+                'model': current_app.config.get('OLLAMA_MODEL', 'deepseek-r1:14b'),
+                'api_url': current_app.config.get('OLLAMA_API_URL', 'http://localhost:11434/api/chat')
             }
             logger.info("Using local DeepSeek model through Ollama")
-        elif request.app.config.get('DEEPSEEK_API_KEY'):
+        elif current_app.config.get('DEEPSEEK_API_KEY'):
             ai_type = 'deepseek_api'
             ai_config = {
-                'api_key': request.app.config.get('DEEPSEEK_API_KEY'),
-                'api_url': request.app.config.get('DEEPSEEK_API_URL', 'https://api.deepseek.com/v1/chat/completions')
+                'api_key': current_app.config.get('DEEPSEEK_API_KEY'),
+                'api_url': current_app.config.get('DEEPSEEK_API_URL', 'https://api.deepseek.com/v1/chat/completions')
             }
             logger.info("Using DeepSeek API")
         else:

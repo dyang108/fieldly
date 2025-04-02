@@ -3,6 +3,7 @@ from .schemas import schemas_bp
 from .datasets import datasets_bp
 from .uploads import uploads_bp
 from .ai import ai_bp
+from .extractors import extractors_bp
 
 
 def register_blueprints(app: Flask) -> None:
@@ -16,6 +17,7 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(datasets_bp)
     app.register_blueprint(uploads_bp)
     app.register_blueprint(ai_bp)
+    app.register_blueprint(extractors_bp)
 
 
 __all__ = ['register_blueprints'] 

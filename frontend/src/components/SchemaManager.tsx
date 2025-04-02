@@ -31,6 +31,15 @@ interface Schema {
   created_at: string
 }
 
+interface DatasetMapping {
+  id: number
+  dataset_name: string
+  source: string
+  schema_id: number
+  schema_name: string
+  created_at: string
+}
+
 type MessageRole = 'user' | 'assistant' | 'system'
 
 interface Message {
@@ -40,7 +49,10 @@ interface Message {
 
 export default function SchemaManager() {
   const [schemas, setSchemas] = useState<Schema[]>([])
+  const [datasetMappings, setDatasetMappings] = useState<DatasetMapping[]>([])
   const [loading, setLoading] = useState(false)
+  const [extracting, setExtracting] = useState(false)
+  const [extractionResult, setExtractionResult] = useState<any>(null)
   const [error, setError] = useState('')
   const [notification, setNotification] = useState('')
   
@@ -57,6 +69,7 @@ export default function SchemaManager() {
 
   useEffect(() => {
     fetchSchemas()
+    fetchDatasetMappings()
   }, [])
 
   const fetchSchemas = async () => {
@@ -70,6 +83,15 @@ export default function SchemaManager() {
       setError('Failed to fetch schemas')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const fetchDatasetMappings = async () => {
+    try {
+      const response = await api.get('/api/dataset-mappings')
+      setDatasetMappings(response.data)
+    } catch (err) {
+      console.error('Error fetching dataset mappings:', err)
     }
   }
 
@@ -201,6 +223,21 @@ export default function SchemaManager() {
     setSchemaName('')
   }
 
+  const handleExtractData = async (datasetName: string, source: string) => {
+    setExtracting(true)
+    setExtractionResult(null)
+    try {
+      const response = await api.post(`/api/extract/${source}/${datasetName}`)
+      setExtractionResult(response.data)
+      setNotification(`Data extraction completed for ${datasetName}`)
+    } catch (err) {
+      console.error('Error extracting data:', err)
+      setError('Failed to extract data from dataset')
+    } finally {
+      setExtracting(false)
+    }
+  }
+
   return (
     <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {notification && (
@@ -328,103 +365,172 @@ export default function SchemaManager() {
         </Box>
       )}
 
-      {/* Saved Schemas */}
-      <Typography variant="subtitle1" gutterBottom>
-        Saved Schemas
+      {/* Existing Schemas */}
+      <Typography variant="h6" sx={{ mt: 2, mb: 1 }}>
+        Schemas
+        <Button 
+          size="small" 
+          startIcon={<RefreshIcon />} 
+          onClick={fetchSchemas}
+          sx={{ ml: 2 }}
+        >
+          Refresh
+        </Button>
       </Typography>
-      
-      <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
-        {loading ? (
-          <Box sx={{ display: 'flex', justifyContent: 'center', my: 2 }}>
-            <CircularProgress size={24} />
-          </Box>
-        ) : schemas.length > 0 ? (
-          <Box>
-            {schemas.map((schema) => (
-              <Accordion key={schema.id} sx={{ mb: 1 }} disableGutters>
-                <AccordionSummary 
-                  expandIcon={<ExpandMoreIcon />}
-                  sx={{ minHeight: '48px', py: 0 }}
-                >
-                  <Typography variant="body2">{schema.name}</Typography>
-                  <Chip 
+
+      {loading ? (
+        <CircularProgress />
+      ) : schemas.length === 0 ? (
+        <Typography color="text.secondary">No schemas found</Typography>
+      ) : (
+        schemas.map((schema) => (
+          <Accordion key={schema.id} sx={{ mb: 1 }}>
+            <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', pr: 2 }}>
+                <Typography>{schema.name}</Typography>
+                <Box sx={{ display: 'flex', ml: 2 }}>
+                  <Button 
                     size="small" 
-                    label={new Date(schema.created_at).toLocaleDateString()} 
-                    sx={{ ml: 1, height: '20px', fontSize: '0.7rem' }}
-                  />
-                </AccordionSummary>
-                <AccordionDetails sx={{ p: 1 }}>
-                  {editingSchema?.id === schema.id ? (
-                    <>
-                      <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
-                        <ReactJson 
-                          src={editedSchema || {}} 
-                          theme="rjv-default" 
-                          displayDataTypes={false}
-                          onEdit={(edit: any) => setEditedSchema(edit.updated_src)}
-                          onAdd={(add: any) => setEditedSchema(add.updated_src)}
-                          onDelete={(del: any) => setEditedSchema(del.updated_src)}
+                    startIcon={<EditIcon />} 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleStartEditing(schema);
+                    }}
+                    sx={{ mr: 1 }}
+                  >
+                    Edit
+                  </Button>
+                  <Button 
+                    size="small" 
+                    color="error"
+                    startIcon={<DeleteIcon />} 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (window.confirm(`Delete schema ${schema.name}?`)) {
+                        handleDeleteSchema(schema.id);
+                      }
+                    }}
+                  >
+                    Delete
+                  </Button>
+                </Box>
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails>
+              {/* Schema content */}
+              <ReactJson 
+                src={schema.schema} 
+                name={false} 
+                collapsed={1}
+                displayDataTypes={false}
+                enableClipboard={false}
+              />
+              
+              {/* Associated Datasets */}
+              <Box sx={{ mt: 2 }}>
+                <Typography variant="subtitle2">Associated Datasets:</Typography>
+                {datasetMappings.filter(mapping => mapping.schema_id === schema.id).length === 0 ? (
+                  <Typography variant="body2" color="text.secondary">No datasets using this schema</Typography>
+                ) : (
+                  datasetMappings
+                    .filter(mapping => mapping.schema_id === schema.id)
+                    .map(mapping => (
+                      <Box key={mapping.id} sx={{ display: 'flex', alignItems: 'center', mt: 1 }}>
+                        <Chip 
+                          label={`${mapping.dataset_name} (${mapping.source})`} 
+                          size="small" 
+                          sx={{ mr: 1 }}
                         />
-                      </Box>
-                      <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
                         <Button 
-                          variant="contained" 
+                          size="small" 
+                          variant="outlined" 
                           color="primary"
-                          size="small"
-                          onClick={handleUpdateSchema}
+                          disabled={extracting}
+                          onClick={() => handleExtractData(mapping.dataset_name, mapping.source)}
                         >
-                          Save
-                        </Button>
-                        <Button 
-                          variant="outlined"
-                          size="small"
-                          onClick={() => setEditingSchema(null)}
-                        >
-                          Cancel
+                          {extracting ? 'Extracting...' : 'Extract Data'}
                         </Button>
                       </Box>
-                    </>
-                  ) : (
-                    <>
-                      <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
-                        <ReactJson 
-                          src={schema.schema} 
-                          theme="rjv-default" 
-                          displayDataTypes={false}
-                          collapsed={2}
-                        />
-                      </Box>
-                      <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
-                        <Button 
-                          variant="outlined" 
-                          size="small"
-                          startIcon={<EditIcon />}
-                          onClick={() => handleStartEditing(schema)}
-                        >
-                          Edit
-                        </Button>
-                        <Button 
-                          variant="outlined" 
-                          color="error"
-                          size="small"
-                          startIcon={<DeleteIcon />}
-                          onClick={() => handleDeleteSchema(schema.id)}
-                        >
-                          Delete
-                        </Button>
-                      </Box>
-                    </>
-                  )}
-                </AccordionDetails>
-              </Accordion>
-            ))}
-          </Box>
-        ) : (
-          <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
-            No schemas found. Generate one using the conversation.
+                    ))
+                )}
+              </Box>
+            </AccordionDetails>
+          </Accordion>
+        ))
+      )}
+
+      {/* Editing Modal */}
+      {editingSchema && (
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="h6" gutterBottom>
+            Edit Schema
           </Typography>
-        )}
-      </Box>
+          <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
+            <ReactJson 
+              src={editedSchema || {}} 
+              theme="rjv-default" 
+              displayDataTypes={false}
+              onEdit={(edit: any) => setEditedSchema(edit.updated_src)}
+              onAdd={(add: any) => setEditedSchema(add.updated_src)}
+              onDelete={(del: any) => setEditedSchema(del.updated_src)}
+            />
+          </Box>
+          <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
+            <Button 
+              variant="contained" 
+              color="primary"
+              size="small"
+              onClick={handleUpdateSchema}
+            >
+              Save
+            </Button>
+            <Button 
+              variant="outlined"
+              size="small"
+              onClick={() => setEditingSchema(null)}
+            >
+              Cancel
+            </Button>
+          </Box>
+        </Box>
+      )}
+
+      {/* Extraction Results */}
+      {extractionResult && (
+        <Box sx={{ mt: 2 }}>
+          <Typography variant="h6">Extraction Results</Typography>
+          <Card sx={{ mt: 1 }}>
+            <CardContent>
+              <Typography variant="subtitle1" color="primary">
+                Dataset: {extractionResult.dataset}
+              </Typography>
+              <Typography variant="body2">
+                Output Directory: {extractionResult.output_directory}
+              </Typography>
+              <Typography variant="body2">
+                Processed {extractionResult.processed_files} files
+              </Typography>
+              
+              <Typography variant="subtitle2" sx={{ mt: 2 }}>Results:</Typography>
+              <Box sx={{ mt: 1, maxHeight: 200, overflowY: 'auto' }}>
+                {extractionResult.results.map((result: any, index: number) => (
+                  <Alert 
+                    key={index} 
+                    severity={result.status === 'success' ? 'success' : 'error'}
+                    sx={{ mb: 1 }}
+                  >
+                    <Typography variant="body2">
+                      {result.filename}: {result.status === 'success' 
+                        ? `Extracted to ${result.output_file}` 
+                        : result.message}
+                    </Typography>
+                  </Alert>
+                ))}
+              </Box>
+            </CardContent>
+          </Card>
+        </Box>
+      )}
     </Box>
   )
 } 

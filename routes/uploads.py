@@ -1,5 +1,5 @@
 import logging
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from werkzeug.utils import secure_filename
 
 from storage import create_storage
@@ -47,19 +47,19 @@ def upload_file():
     
     try:
         # Get storage configuration from app config
-        storage_type = request.app.config.get('STORAGE_TYPE', 'local')
+        storage_type = current_app.config.get('STORAGE_TYPE', 'local')
         storage_config = {}
         
         if storage_type == 's3':
             storage_config = {
-                'bucket_name': request.app.config.get('S3_BUCKET_NAME'),
-                'aws_access_key_id': request.app.config.get('AWS_ACCESS_KEY_ID'),
-                'aws_secret_access_key': request.app.config.get('AWS_SECRET_ACCESS_KEY'),
-                'region_name': request.app.config.get('AWS_REGION')
+                'bucket_name': current_app.config.get('S3_BUCKET_NAME'),
+                'aws_access_key_id': current_app.config.get('AWS_ACCESS_KEY_ID'),
+                'aws_secret_access_key': current_app.config.get('AWS_SECRET_ACCESS_KEY'),
+                'region_name': current_app.config.get('AWS_REGION')
             }
         else:
             storage_config = {
-                'storage_path': request.app.config.get('LOCAL_STORAGE_PATH', '.data')
+                'storage_path': current_app.config.get('LOCAL_STORAGE_PATH', '.data')
             }
         
         # Create storage instance
