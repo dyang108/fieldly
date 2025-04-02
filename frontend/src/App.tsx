@@ -1,9 +1,11 @@
-import { useState } from 'react'
-import { Box, Container, Typography, Paper, Grid, Divider } from '@mui/material'
+import { Box, Container, Typography, Paper, Divider, useMediaQuery, Theme } from '@mui/material'
 import FileUpload from './components/FileUpload'
 import SchemaManager from './components/SchemaManager'
+import DatasetSchemaTable from './components/DatasetSchemaTable'
 
 function App() {
+  const isMobile = useMediaQuery((theme: Theme) => theme.breakpoints.down('md'))
+
   return (
     <Container maxWidth="xl">
       <Box sx={{ my: 4 }}>
@@ -14,7 +16,14 @@ function App() {
           Upload PDFs and generate schemas using AI
         </Typography>
         
-        <Box sx={{ display: 'flex', gap: 4, mt: 2 }}>
+        <DatasetSchemaTable />
+        
+        <Box sx={{ 
+          display: 'flex', 
+          flexDirection: isMobile ? 'column' : 'row',
+          gap: 4, 
+          mt: 2 
+        }}>
           <Paper elevation={3} sx={{ p: 3, flex: 1 }}>
             <Typography variant="h5" component="h2" gutterBottom>
               Upload Files

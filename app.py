@@ -6,9 +6,9 @@ from dotenv import load_dotenv
 from datetime import datetime
 import pathlib
 from flask_cors import CORS
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON, ForeignKey
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, relationship
 import logging
 import requests
 import json
@@ -76,6 +76,17 @@ class Schema(Base):
     def set_schema(self, schema_data):
         """Set the schema from a Python object"""
         self.schema = json.dumps(schema_data)
+
+class DatasetSchemaMapping(Base):
+    __tablename__ = 'dataset_schema_mappings'
+    id = Column(Integer, primary_key=True)
+    dataset_name = Column(String, nullable=False)
+    source = Column(String, nullable=False)  # 'local' or 's3'
+    schema_id = Column(Integer, ForeignKey('schemas.id'))
+    created_at = Column(DateTime, default=datetime.utcnow)
+    
+    # Define relationship with Schema
+    schema = relationship("Schema")
 
 # Drop and recreate the table to ensure correct schema
 Base.metadata.drop_all(engine)
@@ -632,6 +643,164 @@ def generate_schema():
         result = generate_schema_locally(conversation)
     
     return jsonify(result)
+
+@app.route('/api/datasets', methods=['GET'])
+def get_datasets():
+    try:
+        logger.info("Starting GET /api/datasets request")
+        local_datasets = []
+        
+        # List directories in .data folder
+        data_dir = os.path.join(os.getcwd(), '.data')
+        if os.path.exists(data_dir):
+            local_datasets = [d for d in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, d))]
+            logger.info(f"Found {len(local_datasets)} local datasets")
+        else:
+            logger.info("No .data directory found")
+            
+        # TODO: Implement S3 dataset listing if needed
+        
+        result = {
+            "local": local_datasets,
+            "s3": []  # Placeholder for S3 datasets
+        }
+        
+        logger.info("Successfully prepared datasets response")
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error in GET /api/datasets: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/dataset-mappings', methods=['GET'])
+def get_dataset_mappings():
+    session = Session()
+    try:
+        logger.info("Starting GET /api/dataset-mappings request")
+        mappings = session.query(DatasetSchemaMapping).all()
+        logger.info(f"Successfully retrieved {len(mappings)} dataset mappings from database")
+        
+        result = []
+        for mapping in mappings:
+            schema_name = None
+            if mapping.schema_id:
+                schema = session.query(Schema).get(mapping.schema_id)
+                if schema:
+                    schema_name = schema.name
+                    
+            mapping_dict = {
+                'id': mapping.id,
+                'dataset_name': mapping.dataset_name,
+                'source': mapping.source,
+                'schema_id': mapping.schema_id,
+                'schema_name': schema_name,
+                'created_at': mapping.created_at.isoformat() if mapping.created_at else None
+            }
+            result.append(mapping_dict)
+            
+        logger.info("Successfully prepared dataset mappings response")
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error in GET /api/dataset-mappings: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+@app.route('/api/dataset-mappings', methods=['POST'])
+def create_or_update_mapping():
+    session = Session()
+    try:
+        logger.info("Starting POST /api/dataset-mappings request")
+        data = request.get_json()
+        logger.debug(f"Received data: {data}")
+        
+        if not data or 'dataset_name' not in data or 'source' not in data:
+            logger.error("Missing required fields in request data")
+            return jsonify({'error': 'Missing required fields'}), 400
+            
+        # Check if mapping already exists
+        existing_mapping = session.query(DatasetSchemaMapping).filter_by(
+            dataset_name=data['dataset_name'],
+            source=data['source']
+        ).first()
+        
+        if existing_mapping:
+            # Update existing mapping
+            existing_mapping.schema_id = data.get('schema_id')
+            logger.info(f"Updated mapping for dataset {data['dataset_name']}")
+        else:
+            # Create new mapping
+            mapping = DatasetSchemaMapping(
+                dataset_name=data['dataset_name'],
+                source=data['source'],
+                schema_id=data.get('schema_id')
+            )
+            session.add(mapping)
+            logger.info(f"Created new mapping for dataset {data['dataset_name']}")
+            
+        session.commit()
+        logger.info("Successfully saved dataset mapping")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Dataset mapping saved successfully'
+        }), 201
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error in POST /api/dataset-mappings: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
+
+@app.route('/api/apply-schema/<source>/<path:dataset_name>', methods=['POST'])
+def apply_schema_to_dataset(source, dataset_name):
+    session = Session()
+    try:
+        logger.info(f"Starting POST /api/apply-schema/{source}/{dataset_name} request")
+        data = request.get_json()
+        
+        if not data or 'schema_id' not in data:
+            logger.error("Missing schema_id in request data")
+            return jsonify({'error': 'schema_id is required'}), 400
+            
+        schema_id = data['schema_id']
+        schema = session.query(Schema).get(schema_id)
+        
+        if not schema:
+            logger.error(f"Schema with ID {schema_id} not found")
+            return jsonify({'error': 'Schema not found'}), 404
+            
+        # TODO: Apply the schema to the dataset files
+        # This would involve reading files from the dataset directory
+        # and processing them according to the schema
+        
+        # For now, we'll just update or create the mapping
+        existing_mapping = session.query(DatasetSchemaMapping).filter_by(
+            dataset_name=dataset_name,
+            source=source
+        ).first()
+        
+        if existing_mapping:
+            existing_mapping.schema_id = schema_id
+        else:
+            mapping = DatasetSchemaMapping(
+                dataset_name=dataset_name,
+                source=source,
+                schema_id=schema_id
+            )
+            session.add(mapping)
+            
+        session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Schema "{schema.name}" has been applied to dataset "{dataset_name}"'
+        })
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error applying schema to dataset: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
+        session.close()
 
 if __name__ == '__main__':
     app.run(debug=True) 

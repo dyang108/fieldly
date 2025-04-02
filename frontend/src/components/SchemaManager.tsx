@@ -4,28 +4,17 @@ import {
   Button,
   TextField,
   Typography,
-  Paper,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemSecondaryAction,
-  IconButton,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Divider,
+  Alert,
   Card,
   CardContent,
-  Grid,
   CircularProgress,
-  Alert,
   Accordion,
   AccordionSummary,
   AccordionDetails,
-  Chip
+  Chip,
+  Snackbar
 } from '@mui/material'
-import { Delete as DeleteIcon, Edit as EditIcon, Add as AddIcon, ExpandMore as ExpandMoreIcon, Send as SendIcon, Refresh as RefreshIcon } from '@mui/icons-material'
+import { Delete as DeleteIcon, Edit as EditIcon, ExpandMore as ExpandMoreIcon, Refresh as RefreshIcon } from '@mui/icons-material'
 import axios from 'axios'
 // @ts-ignore
 import ReactJson from 'react-json-view'
@@ -213,21 +202,14 @@ export default function SchemaManager() {
   }
 
   return (
-    <Box sx={{ 
-      maxWidth: 800, 
-      mx: 'auto',
-      display: 'flex',
-      flexDirection: 'column',
-      gap: 2
-    }}>
-      <Typography variant="h6" align="center" gutterBottom>
-        Schema Manager
-      </Typography>
-      
+    <Box sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       {notification && (
-        <Alert severity="success" sx={{ mb: 2 }}>
-          {notification}
-        </Alert>
+        <Snackbar
+          open={!!notification}
+          autoHideDuration={3000}
+          message={notification}
+          onClose={() => setNotification('')}
+        />
       )}
       
       {error && (
@@ -236,19 +218,26 @@ export default function SchemaManager() {
         </Alert>
       )}
 
-      <Paper sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          Generate Schema from Conversation
+      {/* Chat interface */}
+      <Box sx={{ mb: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+          <Typography variant="subtitle1">
+            Generate Schema
+          </Typography>
           {conversation.length > 0 && (
-            <IconButton size="small" onClick={handleResetConversation} sx={{ ml: 1 }}>
-              <RefreshIcon />
-            </IconButton>
+            <Button 
+              size="small" 
+              startIcon={<RefreshIcon />} 
+              onClick={handleResetConversation}
+            >
+              Reset
+            </Button>
           )}
-        </Typography>
+        </Box>
         
         {/* Conversation Display */}
         {conversation.length > 0 && (
-          <Box sx={{ mb: 3, maxHeight: 300, overflowY: 'auto', p: 1 }}>
+          <Box sx={{ mb: 2, maxHeight: 200, overflowY: 'auto', p: 1 }}>
             {conversation.map((message, index) => (
               <Box 
                 key={index} 
@@ -264,7 +253,7 @@ export default function SchemaManager() {
                     bgcolor: message.role === 'user' ? 'primary.light' : 'grey.100'
                   }}
                 >
-                  <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
+                  <CardContent sx={{ py: 1, px: 1.5, '&:last-child': { pb: 1 } }}>
                     <Typography variant="body2" color={message.role === 'user' ? 'white' : 'text.primary'}>
                       {message.content}
                     </Typography>
@@ -275,52 +264,16 @@ export default function SchemaManager() {
           </Box>
         )}
         
-        {/* Generated Schema Preview */}
-        {generatedSchema && (
-          <Box sx={{ mb: 3 }}>
-            <Typography variant="subtitle1" gutterBottom>
-              Generated Schema Preview:
-            </Typography>
-            <TextField
-              fullWidth
-              label="Schema Name"
-              value={schemaName}
-              onChange={(e) => setSchemaName(e.target.value)}
-              margin="normal"
-              required
-              sx={{ mb: 2 }}
-            />
-            <Paper sx={{ p: 2, maxHeight: 300, overflowY: 'auto' }}>
-              <ReactJson 
-                src={generatedSchema} 
-                theme="rjv-default" 
-                displayDataTypes={false}
-                collapsed={1}
-              />
-            </Paper>
-            <Button
-              variant="contained"
-              color="primary"
-              sx={{ mt: 2 }}
-              onClick={handleSaveGeneratedSchema}
-            >
-              Save Schema
-            </Button>
-          </Box>
-        )}
-        
-        {/* User Input */}
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+        {/* Input area */}
+        <Box sx={{ display: 'flex', gap: 1 }}>
           <TextField
+            size="small"
             fullWidth
-            label="Describe your schema in natural language..."
+            placeholder="Describe your schema..."
             value={userPrompt}
             onChange={(e) => setUserPrompt(e.target.value)}
-            margin="normal"
-            multiline
-            rows={2}
             onKeyPress={(e) => {
-              if (e.key === 'Enter' && e.shiftKey) {
+              if (e.key === 'Enter' && !e.shiftKey) {
                 handleSendPrompt()
                 e.preventDefault()
               }
@@ -329,58 +282,102 @@ export default function SchemaManager() {
           <Button
             variant="contained"
             color="primary"
-            endIcon={generatingSchema ? <CircularProgress size={20} /> : <SendIcon />}
+            size="small"
             onClick={handleSendPrompt}
             disabled={generatingSchema || !userPrompt.trim()}
-            sx={{ height: 56, minWidth: 100 }}
+            sx={{ minWidth: '80px' }}
           >
-            Send
+            {generatingSchema ? <CircularProgress size={24} /> : 'Send'}
           </Button>
         </Box>
-      </Paper>
+      </Box>
 
+      {/* Generated Schema Preview */}
+      {generatedSchema && (
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="subtitle1" gutterBottom>
+            Schema Preview:
+          </Typography>
+          <TextField
+            fullWidth
+            size="small"
+            label="Schema Name"
+            value={schemaName}
+            onChange={(e) => setSchemaName(e.target.value)}
+            margin="dense"
+            required
+          />
+          <Box sx={{ mt: 1, maxHeight: 200, overflowY: 'auto', border: '1px solid #eee', borderRadius: 1 }}>
+            <ReactJson 
+              src={generatedSchema} 
+              theme="rjv-default" 
+              displayDataTypes={false}
+              collapsed={1}
+              style={{ padding: '8px' }}
+            />
+          </Box>
+          <Button
+            variant="contained"
+            color="primary"
+            size="small"
+            sx={{ mt: 1 }}
+            onClick={handleSaveGeneratedSchema}
+          >
+            Save Schema
+          </Button>
+        </Box>
+      )}
+
+      {/* Saved Schemas */}
       <Typography variant="subtitle1" gutterBottom>
         Saved Schemas
       </Typography>
       
-      {loading ? (
-        <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
-          <CircularProgress />
-        </Box>
-      ) : schemas.length > 0 ? (
-        <List>
-          {schemas.map((schema) => (
-            <Accordion key={schema.id} sx={{ mb: 1 }}>
-              <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                <Typography>{schema.name}</Typography>
-                <Chip 
-                  size="small" 
-                  label={new Date(schema.created_at).toLocaleDateString()} 
-                  sx={{ ml: 2 }}
-                />
-              </AccordionSummary>
-              <AccordionDetails>
-                <Box sx={{ mb: 2 }}>
+      <Box sx={{ flexGrow: 1, overflowY: 'auto' }}>
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', my: 2 }}>
+            <CircularProgress size={24} />
+          </Box>
+        ) : schemas.length > 0 ? (
+          <Box>
+            {schemas.map((schema) => (
+              <Accordion key={schema.id} sx={{ mb: 1 }} disableGutters>
+                <AccordionSummary 
+                  expandIcon={<ExpandMoreIcon />}
+                  sx={{ minHeight: '48px', py: 0 }}
+                >
+                  <Typography variant="body2">{schema.name}</Typography>
+                  <Chip 
+                    size="small" 
+                    label={new Date(schema.created_at).toLocaleDateString()} 
+                    sx={{ ml: 1, height: '20px', fontSize: '0.7rem' }}
+                  />
+                </AccordionSummary>
+                <AccordionDetails sx={{ p: 1 }}>
                   {editingSchema?.id === schema.id ? (
                     <>
-                      <ReactJson 
-                        src={editedSchema || {}} 
-                        theme="rjv-default" 
-                        displayDataTypes={false}
-                        onEdit={(edit: any) => setEditedSchema(edit.updated_src)}
-                        onAdd={(add: any) => setEditedSchema(add.updated_src)}
-                        onDelete={(del: any) => setEditedSchema(del.updated_src)}
-                      />
-                      <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
+                      <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
+                        <ReactJson 
+                          src={editedSchema || {}} 
+                          theme="rjv-default" 
+                          displayDataTypes={false}
+                          onEdit={(edit: any) => setEditedSchema(edit.updated_src)}
+                          onAdd={(add: any) => setEditedSchema(add.updated_src)}
+                          onDelete={(del: any) => setEditedSchema(del.updated_src)}
+                        />
+                      </Box>
+                      <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
                         <Button 
                           variant="contained" 
                           color="primary"
+                          size="small"
                           onClick={handleUpdateSchema}
                         >
-                          Save Changes
+                          Save
                         </Button>
                         <Button 
                           variant="outlined"
+                          size="small"
                           onClick={() => setEditingSchema(null)}
                         >
                           Cancel
@@ -389,15 +386,18 @@ export default function SchemaManager() {
                     </>
                   ) : (
                     <>
-                      <ReactJson 
-                        src={schema.schema} 
-                        theme="rjv-default" 
-                        displayDataTypes={false}
-                        collapsed={1}
-                      />
-                      <Box sx={{ mt: 2, display: 'flex', gap: 1 }}>
+                      <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
+                        <ReactJson 
+                          src={schema.schema} 
+                          theme="rjv-default" 
+                          displayDataTypes={false}
+                          collapsed={2}
+                        />
+                      </Box>
+                      <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
                         <Button 
                           variant="outlined" 
+                          size="small"
                           startIcon={<EditIcon />}
                           onClick={() => handleStartEditing(schema)}
                         >
@@ -406,6 +406,7 @@ export default function SchemaManager() {
                         <Button 
                           variant="outlined" 
                           color="error"
+                          size="small"
                           startIcon={<DeleteIcon />}
                           onClick={() => handleDeleteSchema(schema.id)}
                         >
@@ -414,16 +415,16 @@ export default function SchemaManager() {
                       </Box>
                     </>
                   )}
-                </Box>
-              </AccordionDetails>
-            </Accordion>
-          ))}
-        </List>
-      ) : (
-        <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 3 }}>
-          No schemas found. Generate one using the conversation interface above.
-        </Typography>
-      )}
+                </AccordionDetails>
+              </Accordion>
+            ))}
+          </Box>
+        ) : (
+          <Typography variant="body2" color="text.secondary" sx={{ textAlign: 'center', py: 2 }}>
+            No schemas found. Generate one using the conversation.
+          </Typography>
+        )}
+      </Box>
     </Box>
   )
 } 
