@@ -1,71 +1,37 @@
 import { useState } from 'react'
-import { Box, Container, Tab, Tabs, Typography, Paper } from '@mui/material'
+import { Box, Container, Typography, Paper, Grid, Divider } from '@mui/material'
 import FileUpload from './components/FileUpload'
 import SchemaManager from './components/SchemaManager'
 
-interface TabPanelProps {
-  children?: React.ReactNode
-  index: number
-  value: number
-}
-
-function TabPanel(props: TabPanelProps) {
-  const { children, value, index, ...other } = props
-
-  return (
-    <div
-      role="tabpanel"
-      hidden={value !== index}
-      id={`simple-tabpanel-${index}`}
-      aria-labelledby={`simple-tab-${index}`}
-      {...other}
-    >
-      {value === index && (
-        <Box sx={{ p: 3 }}>
-          {children}
-        </Box>
-      )}
-    </div>
-  )
-}
-
 function App() {
-  const [tabValue, setTabValue] = useState(0)
-
-  const handleTabChange = (_event: React.SyntheticEvent, newValue: number) => {
-    setTabValue(newValue)
-  }
-
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
-      <Paper elevation={3} sx={{ p: 3 }}>
-        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-          <Typography variant="h4" component="h1" gutterBottom align="center">
-            Schema Generator
-          </Typography>
+    <Container maxWidth="xl">
+      <Box sx={{ my: 4 }}>
+        <Typography variant="h3" component="h1" gutterBottom align="center">
+          Schema Generator
+        </Typography>
+        <Typography variant="subtitle1" gutterBottom align="center" color="text.secondary">
+          Upload PDFs and generate schemas using AI
+        </Typography>
+        
+        <Box sx={{ display: 'flex', gap: 4, mt: 2 }}>
+          <Paper elevation={3} sx={{ p: 3, flex: 1 }}>
+            <Typography variant="h5" component="h2" gutterBottom>
+              Upload Files
+            </Typography>
+            <Divider sx={{ mb: 3 }} />
+            <FileUpload />
+          </Paper>
           
-          <Box sx={{ width: '100%', borderBottom: 1, borderColor: 'divider', mb: 3 }}>
-            <Tabs 
-              value={tabValue} 
-              onChange={handleTabChange}
-              centered
-              sx={{ mb: -1 }}
-            >
-              <Tab label="File Upload" />
-              <Tab label="Schema Manager" />
-            </Tabs>
-          </Box>
-
-          <Box sx={{ width: '100%' }}>
-            <TabPanel value={tabValue} index={0}>
-              <FileUpload />
-            </TabPanel>
-            <TabPanel value={tabValue} index={1}>
-              <SchemaManager />
-            </TabPanel>
-          </Box>
+          <Paper elevation={3} sx={{ p: 3, flex: 1 }}>
+            <Typography variant="h5" component="h2" gutterBottom>
+              Schema Manager
+            </Typography>
+            <Divider sx={{ mb: 3 }} />
+            <SchemaManager />
+          </Paper>
         </Box>
-      </Paper>
+      </Box>
     </Container>
   )
 }
