@@ -6,6 +6,7 @@ werkzeug==2.3.7
 requests==2.31.0
 boto3==1.34.32
 pypdf==5.4.0
+pymupdf4llm==0.0.19
 # for testing and development
 pytest==7.4.3
 black==23.12.1 

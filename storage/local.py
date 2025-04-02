@@ -19,6 +19,18 @@ class LocalStorage(StorageInterface):
         self.storage_path = os.path.join(os.getcwd(), storage_path)
         self.storage_dir = pathlib.Path(self.storage_path)
         self.storage_dir.mkdir(parents=True, exist_ok=True)
+        # Store config as a private attribute
+        self._config = {'storage_path': self.storage_path}
+    
+    @property
+    def config(self) -> Dict[str, Any]:
+        """
+        Get the storage configuration
+        
+        Returns:
+            Dict with configuration values
+        """
+        return self._config
     
     def save_file(self, dataset_name: str, file_obj: BinaryIO, filename: str) -> Dict[str, Any]:
         """
@@ -124,6 +136,36 @@ class LocalStorage(StorageInterface):
         
         try:
             file_path.unlink()
+            return True
+        except Exception:
+            return False
+            
+    def dataset_exists(self, dataset_name: str) -> bool:
+        """
+        Check if a dataset exists in storage
+        
+        Args:
+            dataset_name: Name of the dataset
+            
+        Returns:
+            True if the dataset exists, False otherwise
+        """
+        dataset_path = self.storage_dir / dataset_name
+        return dataset_path.exists() and dataset_path.is_dir()
+        
+    def create_dataset(self, dataset_name: str) -> bool:
+        """
+        Create a new dataset in storage
+        
+        Args:
+            dataset_name: Name of the dataset
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            dataset_path = self.storage_dir / dataset_name
+            dataset_path.mkdir(exist_ok=True, parents=True)
             return True
         except Exception:
             return False 

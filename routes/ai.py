@@ -21,7 +21,7 @@ def generate_schema():
         ai_config = {}
         
         # Check if local model should be used
-        use_local_model = current_app.config.get('USE_LOCAL_MODEL', 'false').lower() == 'true'
+        use_local_model = current_app.config.get('USE_LOCAL_MODEL', 'true').lower() == 'true'
         
         if use_local_model:
             ai_type = 'deepseek_local'

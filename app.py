@@ -43,7 +43,7 @@ app.config.update(
     AWS_REGION=os.getenv('AWS_REGION', ''),
     
     # AI configuration
-    USE_LOCAL_MODEL=os.getenv('USE_LOCAL_MODEL', 'false'),
+    USE_LOCAL_MODEL=os.getenv('USE_LOCAL_MODEL', 'true'),
     OLLAMA_MODEL=os.getenv('OLLAMA_MODEL', 'deepseek-r1:14b'),
     OLLAMA_API_URL=os.getenv('OLLAMA_API_URL', 'http://localhost:11434/api/chat'),
     DEEPSEEK_API_KEY=os.getenv('DEEPSEEK_API_KEY', ''),

@@ -1,23 +1,34 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Dict, Any
+from typing import List, Dict, Any, BinaryIO
 
 
 class StorageInterface(ABC):
     """Abstract interface for storage backends"""
     
+    @property
     @abstractmethod
-    def save_file(self, dataset_name: str, file_obj: Any, filename: str) -> Dict[str, Any]:
+    def config(self) -> Dict[str, Any]:
+        """
+        Get the storage configuration
+        
+        Returns:
+            Dict with configuration values
+        """
+        pass
+    
+    @abstractmethod
+    def save_file(self, dataset_name: str, file_obj: BinaryIO, filename: str) -> Dict[str, Any]:
         """
         Save a file to storage
         
         Args:
             dataset_name: Name of the dataset
-            file_obj: File-like object to save
+            file_obj: File object to save
             filename: Name of the file
             
         Returns:
-            Dict with file info including path, name, etc.
+            Dict with file info
         """
         pass
     
@@ -66,6 +77,32 @@ class StorageInterface(ABC):
         Args:
             dataset_name: Name of the dataset
             filename: Name of the file
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def dataset_exists(self, dataset_name: str) -> bool:
+        """
+        Check if a dataset exists in storage
+        
+        Args:
+            dataset_name: Name of the dataset
+            
+        Returns:
+            True if the dataset exists, False otherwise
+        """
+        pass
+    
+    @abstractmethod
+    def create_dataset(self, dataset_name: str) -> bool:
+        """
+        Create a new dataset in storage
+        
+        Args:
+            dataset_name: Name of the dataset
             
         Returns:
             True if successful, False otherwise

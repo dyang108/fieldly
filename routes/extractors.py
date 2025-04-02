@@ -114,7 +114,8 @@ def extract_dataset(source: str, dataset_name: str):
 def process_file(storage, dataset_name: str, output_dir: str, filename: str, schema: Dict[str, Any]) -> Dict[str, Any]:
     """Process a single file through the extraction pipeline"""
     try:
-        logger.info(f"Processing file: {filename}")
+        logger.info(f"Starting extraction pipeline for file: {filename}")
+        logger.info(f"Using schema with {len(schema)} top-level fields")
         
         # Get local path if using local storage
         if isinstance(storage.config.get('storage_path'), str):
@@ -132,30 +133,25 @@ def process_file(storage, dataset_name: str, output_dir: str, filename: str, sch
             if not md_path.exists():
                 logger.info(f"Converting PDF to Markdown: {pdf_path}")
                 convert_pdf_to_markdown(str(pdf_path), str(md_path))
+                logger.info("PDF conversion completed")
+            else:
+                logger.info("Using existing Markdown file")
             
             # 2. Extract data from Markdown based on schema
-            logger.info(f"Extracting data from Markdown using schema")
+            logger.info(f"Starting data extraction from Markdown using schema")
             extracted_data = extract_data_from_markdown(str(md_path), schema)
             
             # 3. Save extracted data as JSON
+            logger.info(f"Saving extracted data to: {json_path}")
             with open(json_path, 'w') as f:
                 json.dump(extracted_data, f, indent=2)
                 
-            logger.info(f"Saved extracted data to: {json_path}")
+            logger.info(f"Successfully completed extraction pipeline for {filename}")
             
             return {
                 'filename': filename,
                 'status': 'success',
                 'output_file': str(json_path)
-            }
-        else:
-            # For S3 storage (would require more complex implementation)
-            # For now, we'll return an error
-            logger.error("S3 storage not yet supported for extraction pipeline")
-            return {
-                'filename': filename,
-                'status': 'error',
-                'message': 'S3 storage not yet supported for extraction pipeline'
             }
             
     except Exception as e:
@@ -168,28 +164,17 @@ def process_file(storage, dataset_name: str, output_dir: str, filename: str, sch
 
 
 def convert_pdf_to_markdown(pdf_path: str, md_path: str) -> None:
-    """Convert a PDF file to Markdown using a PDF processing tool"""
+    """Convert a PDF file to Markdown using pymupdf4llm"""
     try:
-        # This is where you'd call your PDF to markdown conversion
-        # For now, let's use a placeholder that would call an external tool
+        # Import pymupdf4llm for PDF to Markdown conversion
+        import pymupdf4llm
         
-        # Example using subprocess (assuming a tool like pdf2md exists)
-        # subprocess.run(['pdf2md', pdf_path, md_path], check=True)
+        # Convert PDF to Markdown using pymupdf4llm
+        markdown_content = pymupdf4llm.to_markdown(pdf_path)
         
-        # Simple implementation using pypdf and writing basic markdown
-        import pypdf
-        
-        with open(pdf_path, 'rb') as f:
-            pdf = pypdf.PdfReader(f)
-            text = ""
-            for page in pdf.pages:
-                text += page.extract_text() + "\n\n"
-        
-        # Basic conversion to markdown format
-        markdown = f"# {os.path.basename(pdf_path)}\n\n{text}"
-        
-        with open(md_path, 'w') as f:
-            f.write(markdown)
+        # Save the markdown content to file
+        with open(md_path, 'w', encoding='utf-8') as f:
+            f.write(markdown_content)
             
         logger.info(f"Converted PDF to Markdown: {md_path}")
         
@@ -205,12 +190,15 @@ def extract_data_from_markdown(md_path: str, schema: Dict[str, Any]) -> Dict[str
         with open(md_path, 'r') as f:
             content = f.read()
             
+        logger.info(f"Starting extraction with schema containing {len(schema)} top-level fields")
+        logger.debug(f"Schema structure: {json.dumps(schema, indent=2)}")
+            
         # Get AI configuration from app config
         ai_type = None
         ai_config = {}
         
         # Check if local model should be used
-        use_local_model = current_app.config.get('USE_LOCAL_MODEL', 'false').lower() == 'true'
+        use_local_model = current_app.config.get('USE_LOCAL_MODEL', 'true').lower() == 'true'
         
         if use_local_model:
             ai_type = 'deepseek_local'
@@ -218,14 +206,17 @@ def extract_data_from_markdown(md_path: str, schema: Dict[str, Any]) -> Dict[str
                 'model': current_app.config.get('OLLAMA_MODEL', 'deepseek-r1:14b'),
                 'api_url': current_app.config.get('OLLAMA_API_URL', 'http://localhost:11434/api/chat')
             }
+            logger.info(f"Using local model: {ai_config['model']}")
         elif current_app.config.get('DEEPSEEK_API_KEY'):
             ai_type = 'deepseek_api'
             ai_config = {
                 'api_key': current_app.config.get('DEEPSEEK_API_KEY'),
                 'api_url': current_app.config.get('DEEPSEEK_API_URL', 'https://api.deepseek.com/v1/chat/completions')
             }
+            logger.info("Using DeepSeek API")
         else:
             ai_type = 'mock'
+            logger.info("Using mock AI model")
             
         # Create schema generator
         schema_generator = create_schema_generator(ai_type, ai_config)
@@ -246,12 +237,17 @@ Return ONLY the JSON data that follows the schema. Do not include any explanatio
         ]
         
         # Generate structured data
+        logger.info("Sending request to AI model for extraction...")
         result = schema_generator.generate_schema(conversation)
         
         # The result should be a JSON object matching the schema
         if isinstance(result, dict) and 'schema' in result:
-            return result['schema']
+            extracted_data = result['schema']
+            logger.info(f"Successfully extracted data with {len(extracted_data)} fields")
+            logger.debug(f"Extracted data: {json.dumps(extracted_data, indent=2)}")
+            return extracted_data
         else:
+            logger.warning("AI model did not return expected schema format")
             return result
             
     except Exception as e:

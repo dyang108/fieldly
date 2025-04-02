@@ -34,6 +34,19 @@ class S3Storage(StorageInterface):
             aws_secret_access_key=aws_secret_access_key,
             region_name=region_name
         )
+        
+        # Store config as a private attribute
+        self._config = {'storage_path': bucket_name}
+    
+    @property
+    def config(self) -> Dict[str, Any]:
+        """
+        Get the storage configuration
+        
+        Returns:
+            Dict with configuration values
+        """
+        return self._config
     
     def save_file(self, dataset_name: str, file_obj: BinaryIO, filename: str) -> Dict[str, Any]:
         """
@@ -194,4 +207,61 @@ class S3Storage(StorageInterface):
             return True
             
         except ClientError:
+            return False
+    
+    def dataset_exists(self, dataset_name: str) -> bool:
+        """
+        Check if a dataset exists in S3
+        
+        Args:
+            dataset_name: Name of the dataset (prefix)
+            
+        Returns:
+            True if the dataset exists, False otherwise
+        """
+        try:
+            # Ensure dataset_name ends with a slash
+            prefix = f"{dataset_name}/"
+            if dataset_name.endswith('/'):
+                prefix = dataset_name
+            
+            # List objects with the prefix
+            response = self.s3_client.list_objects_v2(
+                Bucket=self.bucket_name,
+                Prefix=prefix,
+                MaxKeys=1
+            )
+            
+            # If there are any objects with this prefix, the dataset exists
+            return 'Contents' in response
+            
+        except ClientError as e:
+            return False
+    
+    def create_dataset(self, dataset_name: str) -> bool:
+        """
+        Create a new dataset in S3 (creates an empty object with the prefix)
+        
+        Args:
+            dataset_name: Name of the dataset (prefix)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Ensure dataset_name ends with a slash
+            prefix = f"{dataset_name}/"
+            if dataset_name.endswith('/'):
+                prefix = dataset_name
+            
+            # Create an empty object with the prefix
+            self.s3_client.put_object(
+                Bucket=self.bucket_name,
+                Key=prefix,
+                Body=''
+            )
+            
+            return True
+            
+        except ClientError as e:
             return False 

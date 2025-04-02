@@ -50,7 +50,7 @@ AWS_SECRET_ACCESS_KEY=your-secret-key
 AWS_REGION=us-west-1
 
 # AI configuration
-USE_LOCAL_MODEL=false  # Set to 'true' to use Ollama
+USE_LOCAL_MODEL=true  # Set to 'true' to use Ollama
 OLLAMA_MODEL=deepseek-r1:14b  # Only used if USE_LOCAL_MODEL=true
 OLLAMA_API_URL=http://localhost:11434/api/chat  # Ollama API URL
 
