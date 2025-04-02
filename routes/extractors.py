@@ -9,6 +9,8 @@ from typing import Dict, List, Any, Optional
 from db import db, Schema, DatasetSchemaMapping
 from storage import create_storage
 from ai import create_schema_generator
+from ai.extractor import DataExtractor
+from ai.deepseek_extractor import DeepSeekExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -183,73 +185,154 @@ def convert_pdf_to_markdown(pdf_path: str, md_path: str) -> None:
         raise
 
 
+def split_content_into_chunks(content: str, max_chunk_size: int = 4000) -> List[str]:
+    """Split markdown content into smaller chunks while preserving structure."""
+    chunks = []
+    current_chunk = []
+    current_size = 0
+    
+    # Split by paragraphs
+    paragraphs = content.split('\n\n')
+    
+    for para in paragraphs:
+        para_size = len(para)
+        
+        # If adding this paragraph would exceed max size, start a new chunk
+        if current_size + para_size > max_chunk_size and current_chunk:
+            chunks.append('\n\n'.join(current_chunk))
+            current_chunk = []
+            current_size = 0
+        
+        current_chunk.append(para)
+        current_size += para_size
+    
+    # Add the last chunk if it exists
+    if current_chunk:
+        chunks.append('\n\n'.join(current_chunk))
+    
+    return chunks
+
+def merge_chunk_data(accumulated_data: Dict[str, Any], chunk_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Merge data from a chunk into accumulated data, taking the first non-null value for each field."""
+    if not accumulated_data:
+        return chunk_data
+    
+    merged = accumulated_data.copy()
+    
+    # Handle basic fields
+    for key, value in chunk_data.items():
+        if key not in merged or merged[key] is None:
+            merged[key] = value
+        elif isinstance(value, dict) and isinstance(merged[key], dict):
+            # Recursively merge dictionaries
+            for subkey, subvalue in value.items():
+                if subkey not in merged[key] or merged[key][subkey] is None:
+                    merged[key][subkey] = subvalue
+        elif isinstance(value, list) and isinstance(merged[key], list):
+            # For lists, we need to handle special cases
+            if key == "timePeriods":
+                # For time periods, merge by period
+                for period_data in value:
+                    period = period_data.get("period")
+                    if not period:
+                        continue
+                    
+                    # Check if period already exists
+                    existing_period = next(
+                        (p for p in merged[key] if p.get("period") == period),
+                        None
+                    )
+                    
+                    if existing_period:
+                        # Merge metrics
+                        for metric, metric_value in period_data.get("metrics", {}).items():
+                            if metric_value is not None and metric not in existing_period["metrics"]:
+                                existing_period["metrics"][metric] = metric_value
+                    else:
+                        merged[key].append(period_data)
+            else:
+                # For other lists, just append new items
+                for item in value:
+                    if item not in merged[key]:
+                        merged[key].append(item)
+    
+    return merged
+
+def print_accumulated_data(data: Dict[str, Any], indent: int = 0) -> None:
+    """Print accumulated data, excluding null values."""
+    indent_str = "  " * indent
+    for key, value in data.items():
+        if value is None:
+            continue
+            
+        if isinstance(value, dict):
+            if any(v is not None for v in value.values()):
+                logger.info(f"{indent_str}{key}:")
+                print_accumulated_data(value, indent + 1)
+        elif isinstance(value, list):
+            if value:
+                logger.info(f"{indent_str}{key}:")
+                for item in value:
+                    if isinstance(item, dict):
+                        logger.info(f"{indent_str}  -")
+                        print_accumulated_data(item, indent + 2)
+                    else:
+                        logger.info(f"{indent_str}  {item}")
+        else:
+            logger.info(f"{indent_str}{key}: {value}")
+
 def extract_data_from_markdown(md_path: str, schema: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract structured data from a Markdown file based on a schema using an LLM"""
-    try:
-        # Read the markdown file
-        with open(md_path, 'r') as f:
-            content = f.read()
-            
-        logger.info(f"Starting extraction with schema containing {len(schema)} top-level fields")
-        logger.debug(f"Schema structure: {json.dumps(schema, indent=2)}")
-            
-        # Get AI configuration from app config
-        ai_type = None
-        ai_config = {}
+    """
+    Extract structured data from a markdown file according to a schema
+    
+    Args:
+        md_path: Path to the markdown file
+        schema: JSON schema defining the structure of the data to extract
         
-        # Check if local model should be used
-        use_local_model = current_app.config.get('USE_LOCAL_MODEL', 'true').lower() == 'true'
+    Returns:
+        Extracted data as a dictionary matching the schema
+    """
+    # Read the markdown file
+    with open(md_path, 'r', encoding='utf-8') as f:
+        content = f.read()
+    
+    # Split content into chunks
+    chunks = split_content_into_chunks(content)
+    logger.info(f"Split content into {len(chunks)} chunks")
+    
+    # Get AI configuration from app config
+    use_api = current_app.config.get('USE_API', 'false').lower() == 'true'
+    
+    # Configure the extractor
+    extractor_config = {
+        'use_api': use_api
+    }
+    
+    if use_api:
+        extractor_config['api_key'] = current_app.config.get('DEEPSEEK_API_KEY')
+        extractor_config['cloud_api_url'] = current_app.config.get('DEEPSEEK_API_URL', 
+                                                                   'https://api.deepseek.com/v1/chat/completions')
+    else:
+        extractor_config['model'] = current_app.config.get('OLLAMA_MODEL', 'deepseek-r1:14b')
+        extractor_config['api_url'] = current_app.config.get('OLLAMA_API_URL', 
+                                                           'http://localhost:11434/api/chat')
+    
+    # Initialize the extractor
+    extractor = DeepSeekExtractor(**extractor_config)
+    
+    # Process each chunk and accumulate data
+    accumulated_data = {}
+    for i, chunk in enumerate(chunks, 1):
+        logger.info(f"Processing chunk {i}/{len(chunks)}")
         
-        if use_local_model:
-            ai_type = 'deepseek_local'
-            ai_config = {
-                'model': current_app.config.get('OLLAMA_MODEL', 'deepseek-r1:14b'),
-                'api_url': current_app.config.get('OLLAMA_API_URL', 'http://localhost:11434/api/chat')
-            }
-            logger.info(f"Using local model: {ai_config['model']}")
-        elif current_app.config.get('DEEPSEEK_API_KEY'):
-            ai_type = 'deepseek_api'
-            ai_config = {
-                'api_key': current_app.config.get('DEEPSEEK_API_KEY'),
-                'api_url': current_app.config.get('DEEPSEEK_API_URL', 'https://api.deepseek.com/v1/chat/completions')
-            }
-            logger.info("Using DeepSeek API")
-        else:
-            ai_type = 'mock'
-            logger.info("Using mock AI model")
-            
-        # Create schema generator
-        schema_generator = create_schema_generator(ai_type, ai_config)
+        # Extract data from the chunk
+        chunk_data = extractor.extract_data(chunk, schema)
         
-        # Prepare a conversation to extract data
-        conversation = [
-            {"role": "user", "content": f"""
-I have a document with the following content:
-
-{content[:8000]}  # Truncate to avoid token limits
-
-Please extract the data according to this JSON schema:
-
-{json.dumps(schema, indent=2)}
-
-Return ONLY the JSON data that follows the schema. Do not include any explanations, only return valid JSON.
-"""}
-        ]
+        # Merge the chunk data into accumulated data
+        accumulated_data = merge_chunk_data(accumulated_data, chunk_data)
         
-        # Generate structured data
-        logger.info("Sending request to AI model for extraction...")
-        result = schema_generator.generate_schema(conversation)
-        
-        # The result should be a JSON object matching the schema
-        if isinstance(result, dict) and 'schema' in result:
-            extracted_data = result['schema']
-            logger.info(f"Successfully extracted data with {len(extracted_data)} fields")
-            logger.debug(f"Extracted data: {json.dumps(extracted_data, indent=2)}")
-            return extracted_data
-        else:
-            logger.warning("AI model did not return expected schema format")
-            return result
-            
-    except Exception as e:
-        logger.error(f"Error extracting data from Markdown: {str(e)}", exc_info=True)
-        raise 
+        # Log the accumulated data
+        logger.info(f"Accumulated data after chunk {i}:")
+        print_accumulated_data(accumulated_data)
+    
+    return accumulated_data 
