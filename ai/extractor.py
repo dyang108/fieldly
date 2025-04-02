@@ -34,21 +34,26 @@ class DataExtractor(ABC):
         Returns:
             Prompt string for the model
         """
-        return f"""Please extract structured data from the following content according to this schema:
+        print(f"Schema: {schema}")
+
+        return f"""Please extract structured data from the following content according to this schema, defined in JSON Schema Draft-07 format:
 
 {json.dumps(schema, indent=2)}
 
 Content to extract from:
 {content}
 
-Please extract all relevant information that matches the schema structure. For numeric values:
+Please extract ONLY the relevant information that matches the schema structure. For numeric values:
 - Remove currency symbols and commas
 - Convert percentages to decimal form (e.g., 25% -> 0.25)
 - Use null for missing or unclear values
 
 For dates, use ISO format (YYYY-MM-DD).
 
-Your response must be a valid JSON object matching the schema exactly. Do not include any explanations or text outside the JSON.
+Your response must be a valid JSON object matching the schema exactly.
+Do not include any explanations or text outside the JSON.
+Do NOT include extraneous fields outside of those specified directly in the JSON Schema.
+It is okay if the JSON object is empty. It is okay if the JSON object is not complete.
 
 Response:"""
     

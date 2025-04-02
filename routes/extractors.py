@@ -259,27 +259,12 @@ def merge_chunk_data(accumulated_data: Dict[str, Any], chunk_data: Dict[str, Any
     return merged
 
 def print_accumulated_data(data: Dict[str, Any], indent: int = 0) -> None:
-    """Print accumulated data, excluding null values."""
-    indent_str = "  " * indent
-    for key, value in data.items():
-        if value is None:
-            continue
-            
-        if isinstance(value, dict):
-            if any(v is not None for v in value.values()):
-                logger.info(f"{indent_str}{key}:")
-                print_accumulated_data(value, indent + 1)
-        elif isinstance(value, list):
-            if value:
-                logger.info(f"{indent_str}{key}:")
-                for item in value:
-                    if isinstance(item, dict):
-                        logger.info(f"{indent_str}  -")
-                        print_accumulated_data(item, indent + 2)
-                    else:
-                        logger.info(f"{indent_str}  {item}")
-        else:
-            logger.info(f"{indent_str}{key}: {value}")
+    """Print accumulated data as formatted JSON."""
+    # Filter out None values for cleaner output
+    filtered_data = {k: v for k, v in data.items() if v is not None}
+    
+    # Print formatted JSON
+    logger.info(json.dumps(filtered_data, indent=2))
 
 def extract_data_from_markdown(md_path: str, schema: Dict[str, Any]) -> Dict[str, Any]:
     """
