@@ -10,6 +10,8 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 import logging
+import requests
+import json
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -55,25 +57,330 @@ ALLOWED_EXTENSIONS = {'csv', 'json', 'txt', 'xlsx', 'xls', 'parquet', 'pdf'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-# Database setup
+# Create SQLAlchemy engine and session
 engine = create_engine('sqlite:///schemas.db')
-Base = declarative_base()
 Session = sessionmaker(bind=engine)
+Base = declarative_base()
 
 class Schema(Base):
     __tablename__ = 'schemas'
-    
     id = Column(Integer, primary_key=True)
     name = Column(String, nullable=False)
-    content = Column(JSON, nullable=False)
+    schema = Column(String, nullable=False)  # Store JSON as string
     created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    def get_schema(self):
+        """Get the schema as a Python object"""
+        return json.loads(self.schema) if self.schema else {}
+
+    def set_schema(self, schema_data):
+        """Set the schema from a Python object"""
+        self.schema = json.dumps(schema_data)
+
+# Drop and recreate the table to ensure correct schema
+Base.metadata.drop_all(engine)
 Base.metadata.create_all(engine)
 
 # Create data directory if it doesn't exist
 DATA_DIR = pathlib.Path(LOCAL_STORAGE_PATH)
 DATA_DIR.mkdir(exist_ok=True)
+
+# DeepSeek API Integration
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_API_URL = "https://api.deepseek.com/v1/chat/completions"
+USE_LOCAL_MODEL = os.getenv("USE_LOCAL_MODEL", "true").lower() == "true"
+OLLAMA_API_URL = "http://localhost:11434/api/chat"
+
+def generate_schema_with_deepseek(conversation):
+    """Generate a schema using the DeepSeek API"""
+    # Convert conversation to DeepSeek format
+    messages = conversation.copy()
+    
+    # Add a system message if not present
+    if not any(msg["role"] == "system" for msg in messages):
+        messages.insert(0, {
+            "role": "system",
+            "content": """You are a helpful assistant that generates JSON schemas based on natural language descriptions. 
+            When asked to create a schema:
+            1. Analyze the user's requirements carefully
+            2. Generate a comprehensive JSON schema that captures all the fields mentioned
+            3. Include appropriate data types, descriptions, and constraints
+            4. Return your response as valid JSON
+            5. Structure your response with a 'message' field containing your explanation
+               and a 'schema' field containing the JSON schema object
+            6. Include a 'suggested_name' field with a good name for this schema
+            """
+        })
+    
+    # If the conversation doesn't end with a specific request for a schema, add it
+    if not messages[-1]["content"].lower().strip().endswith("schema"):
+        messages.append({
+            "role": "user",
+            "content": "Based on our conversation, please generate a complete JSON schema."
+        })
+    
+    try:
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}"
+        }
+        
+        payload = {
+            "model": "deepseek-chat",
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 4000
+        }
+        
+        logger.debug(f"Sending request to DeepSeek API: {json.dumps(payload)}")
+        response = requests.post(DEEPSEEK_API_URL, headers=headers, json=payload)
+        response.raise_for_status()
+        
+        result = response.json()
+        logger.debug(f"DeepSeek API response: {result}")
+        
+        # Extract JSON from the response content
+        content = result["choices"][0]["message"]["content"]
+        
+        # Try to find and parse JSON in the response
+        try:
+            # First, try to parse the entire response as JSON
+            response_data = json.loads(content)
+            return response_data
+        except json.JSONDecodeError:
+            # If that fails, try to extract JSON from markdown code blocks
+            import re
+            json_match = re.search(r'```json\s*([\s\S]*?)\s*```', content)
+            if json_match:
+                json_str = json_match.group(1)
+                response_data = json.loads(json_str)
+                return response_data
+            else:
+                # If no code blocks, look for JSON-like structures
+                json_match = re.search(r'({[\s\S]*})', content)
+                if json_match:
+                    json_str = json_match.group(1)
+                    response_data = json.loads(json_str)
+                    return response_data
+                else:
+                    # If all else fails, return a basic structure with the raw content
+                    return {
+                        "message": "Couldn't parse JSON from response",
+                        "schema": {},
+                        "suggested_name": "new_schema",
+                        "raw_response": content
+                    }
+                
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error calling DeepSeek API: {str(e)}")
+        return {
+            "message": f"Error calling DeepSeek API: {str(e)}",
+            "schema": {},
+            "suggested_name": "new_schema"
+        }
+    except json.JSONDecodeError as e:
+        logger.error(f"Error parsing JSON response: {str(e)}")
+        return {
+            "message": f"Error parsing schema: {str(e)}",
+            "schema": {},
+            "suggested_name": "new_schema",
+            "raw_response": content if 'content' in locals() else ""
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        return {
+            "message": f"Unexpected error: {str(e)}",
+            "schema": {},
+            "suggested_name": "new_schema"
+        }
+
+def generate_schema_locally(conversation):
+    """Generate a schema using a local mock implementation"""
+    # This is a fallback when no API key is available
+    logger.info("Using local schema generation (mock)")
+    
+    # Extract the last user message to determine schema type
+    last_user_message = None
+    for msg in reversed(conversation):
+        if msg["role"] == "user":
+            last_user_message = msg["content"].lower()
+            break
+    
+    # Generate a simple schema based on keywords in the message
+    schema = {
+        "type": "object",
+        "properties": {
+            "id": {
+                "type": "integer",
+                "description": "Unique identifier"
+            },
+            "name": {
+                "type": "string",
+                "description": "Name field"
+            },
+            "created_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Creation timestamp"
+            }
+        },
+        "required": ["id", "name"]
+    }
+    
+    # Add some fields based on common keywords
+    if last_user_message:
+        if "financial" in last_user_message or "finance" in last_user_message:
+            schema["properties"]["amount"] = {
+                "type": "number",
+                "description": "Financial amount"
+            }
+            schema["properties"]["currency"] = {
+                "type": "string",
+                "description": "Currency code"
+            }
+            schema["required"].append("amount")
+            suggested_name = "financial_data"
+            
+        elif "user" in last_user_message or "profile" in last_user_message:
+            schema["properties"]["email"] = {
+                "type": "string",
+                "format": "email",
+                "description": "User email address"
+            }
+            schema["properties"]["age"] = {
+                "type": "integer",
+                "description": "User age"
+            }
+            suggested_name = "user_profile"
+            
+        elif "product" in last_user_message or "item" in last_user_message:
+            schema["properties"]["price"] = {
+                "type": "number",
+                "description": "Product price"
+            }
+            schema["properties"]["description"] = {
+                "type": "string",
+                "description": "Product description"
+            }
+            schema["properties"]["inventory"] = {
+                "type": "integer",
+                "description": "Available inventory"
+            }
+            schema["required"].extend(["price", "description"])
+            suggested_name = "product"
+            
+        else:
+            suggested_name = "general_schema"
+    else:
+        suggested_name = "new_schema"
+    
+    return {
+        "message": "Here is a generated schema based on your description. You can edit it in the schema editor.",
+        "schema": schema,
+        "suggested_name": suggested_name
+    }
+
+def generate_schema_with_local_model(conversation):
+    """Generate a schema using the local DeepSeek model through Ollama"""
+    try:
+        # Convert conversation to Ollama format
+        messages = []
+        for msg in conversation:
+            messages.append({
+                "role": msg["role"],
+                "content": msg["content"]
+            })
+        
+        # Add system message if not present
+        if not any(msg["role"] == "system" for msg in messages):
+            messages.insert(0, {
+                "role": "system",
+                "content": """You are a helpful assistant that generates JSON schemas based on natural language descriptions. 
+                When asked to create a schema:
+                1. Analyze the user's requirements carefully
+                2. Generate a comprehensive JSON schema that captures all the fields mentioned
+                3. Include appropriate data types, descriptions, and constraints
+                4. Return your response as valid JSON
+                5. Structure your response with a 'message' field containing your explanation
+                   and a 'schema' field containing the JSON schema object
+                6. Include a 'suggested_name' field with a good name for this schema
+                """
+            })
+        
+        # If the conversation doesn't end with a specific request for a schema, add it
+        if not messages[-1]["content"].lower().strip().endswith("schema"):
+            messages.append({
+                "role": "user",
+                "content": "Based on our conversation, please generate a complete JSON schema."
+            })
+        
+        payload = {
+            "model": "deepseek-r1:14b",
+            "messages": messages,
+            "stream": False
+        }
+        
+        logger.debug(f"Sending request to local Ollama API: {json.dumps(payload)}")
+        response = requests.post(OLLAMA_API_URL, json=payload)
+        response.raise_for_status()
+        
+        result = response.json()
+        logger.debug(f"Local model response: {result}")
+        
+        # Extract content from Ollama response
+        content = result["message"]["content"]
+        
+        # Try to find and parse JSON in the response
+        try:
+            # First, try to parse the entire response as JSON
+            response_data = json.loads(content)
+            return response_data
+        except json.JSONDecodeError:
+            # If that fails, try to extract JSON from markdown code blocks
+            import re
+            json_match = re.search(r'```json\s*([\s\S]*?)\s*```', content)
+            if json_match:
+                json_str = json_match.group(1)
+                response_data = json.loads(json_str)
+                return response_data
+            else:
+                # If no code blocks, look for JSON-like structures
+                json_match = re.search(r'({[\s\S]*})', content)
+                if json_match:
+                    json_str = json_match.group(1)
+                    response_data = json.loads(json_str)
+                    return response_data
+                else:
+                    # If all else fails, return a basic structure with the raw content
+                    return {
+                        "message": "Couldn't parse JSON from response",
+                        "schema": {},
+                        "suggested_name": "new_schema",
+                        "raw_response": content
+                    }
+                
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Error calling local model API: {str(e)}")
+        return {
+            "message": f"Error calling local model API: {str(e)}",
+            "schema": {},
+            "suggested_name": "new_schema"
+        }
+    except json.JSONDecodeError as e:
+        logger.error(f"Error parsing JSON response: {str(e)}")
+        return {
+            "message": f"Error parsing schema: {str(e)}",
+            "schema": {},
+            "suggested_name": "new_schema",
+            "raw_response": content if 'content' in locals() else ""
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error: {str(e)}")
+        return {
+            "message": f"Unexpected error: {str(e)}",
+            "schema": {},
+            "suggested_name": "new_schema"
+        }
 
 @app.route('/')
 def index():
@@ -191,65 +498,97 @@ def get_schema():
 def get_schemas():
     session = Session()
     try:
+        logger.info("Starting GET /api/schemas request")
         schemas = session.query(Schema).all()
-        return jsonify([{
-            'id': schema.id,
-            'name': schema.name,
-            'content': schema.content,
-            'created_at': schema.created_at.isoformat(),
-            'updated_at': schema.updated_at.isoformat()
-        } for schema in schemas])
+        logger.info(f"Successfully retrieved {len(schemas)} schemas from database")
+        
+        result = []
+        for schema in schemas:
+            try:
+                schema_dict = {
+                    'id': schema.id,
+                    'name': schema.name,
+                    'schema': schema.get_schema(),  # Convert string to JSON
+                    'created_at': schema.created_at.isoformat() if schema.created_at else None
+                }
+                logger.debug(f"Processed schema: {schema.name} (ID: {schema.id})")
+                result.append(schema_dict)
+            except Exception as e:
+                logger.error(f"Error processing schema {schema.id}: {str(e)}")
+                continue
+        
+        logger.info("Successfully prepared schema response")
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error in GET /api/schemas: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
     finally:
         session.close()
 
 @app.route('/api/schemas', methods=['POST'])
 def create_schema():
-    data = request.get_json()
-    if not data or 'name' not in data or 'content' not in data:
-        return jsonify({'error': 'Missing required fields'}), 400
-        
     session = Session()
     try:
+        logger.info("Starting POST /api/schemas request")
+        data = request.get_json()
+        logger.debug(f"Received data: {data}")
+        
+        if not data or 'name' not in data or 'schema' not in data:
+            logger.error("Missing required fields in request data")
+            return jsonify({'error': 'Missing required fields'}), 400
+            
         schema = Schema(
-            name=data['name'],
-            content=data['content']
+            name=data['name']
         )
+        schema.set_schema(data['schema'])  # Convert JSON to string
+        logger.info(f"Created new schema object: {schema.name}")
+        
         session.add(schema)
-        session.commit()
-        return jsonify({
-            'id': schema.id,
-            'name': schema.name,
-            'content': schema.content,
-            'created_at': schema.created_at.isoformat(),
-            'updated_at': schema.updated_at.isoformat()
-        }), 201
+        logger.debug("Added schema to database session")
+        
+        try:
+            session.commit()
+            logger.info(f"Successfully committed schema {schema.id} to database")
+            return jsonify({
+                'id': schema.id,
+                'name': schema.name,
+                'schema': schema.get_schema(),  # Convert string to JSON
+                'created_at': schema.created_at.isoformat() if schema.created_at else None
+            }), 201
+        except Exception as commit_error:
+            logger.error(f"Database commit error: {str(commit_error)}", exc_info=True)
+            session.rollback()
+            return jsonify({'error': 'Database error'}), 500
+            
     except Exception as e:
-        session.rollback()
+        logger.error(f"Error in POST /api/schemas: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
     finally:
         session.close()
 
-@app.route('/api/schemas/<int:schema_id>', methods=['PUT'])
-def update_schema(schema_id):
-    data = request.get_json()
-    if not data or 'name' not in data or 'content' not in data:
-        return jsonify({'error': 'Missing required fields'}), 400
-        
+@app.route('/api/schemas/<int:id>', methods=['PUT'])
+def update_schema(id):
     session = Session()
     try:
-        schema = session.query(Schema).get(schema_id)
+        data = request.get_json()
+        if not data or 'schema' not in data:
+            return jsonify({'error': 'Schema is required'}), 400
+        
+        schema = session.query(Schema).get(id)
         if not schema:
             return jsonify({'error': 'Schema not found'}), 404
-            
-        schema.name = data['name']
-        schema.content = data['content']
+        
+        schema.set_schema(data['schema'])  # Convert JSON to string
+        if 'name' in data:
+            schema.name = data['name']
+        
         session.commit()
+        
         return jsonify({
             'id': schema.id,
             'name': schema.name,
-            'content': schema.content,
-            'created_at': schema.created_at.isoformat(),
-            'updated_at': schema.updated_at.isoformat()
+            'schema': schema.get_schema(),  # Convert string to JSON
+            'created_at': schema.created_at.isoformat()
         })
     except Exception as e:
         session.rollback()
@@ -257,22 +596,42 @@ def update_schema(schema_id):
     finally:
         session.close()
 
-@app.route('/api/schemas/<int:schema_id>', methods=['DELETE'])
-def delete_schema(schema_id):
+@app.route('/api/schemas/<int:id>', methods=['DELETE'])
+def delete_schema(id):
     session = Session()
     try:
-        schema = session.query(Schema).get(schema_id)
+        schema = session.query(Schema).get(id)
         if not schema:
             return jsonify({'error': 'Schema not found'}), 404
-            
+        
         session.delete(schema)
         session.commit()
-        return '', 204
+        
+        return jsonify({'message': 'Schema deleted successfully'})
     except Exception as e:
         session.rollback()
         return jsonify({'error': str(e)}), 500
     finally:
         session.close()
+
+@app.route('/api/generate-schema', methods=['POST'])
+def generate_schema():
+    """Generate a JSON schema from a natural language conversation"""
+    conversation = request.json.get('conversation', [])
+    
+    logger.debug(f"Received schema generation request with conversation: {conversation}")
+    
+    if USE_LOCAL_MODEL:
+        logger.info("Using local DeepSeek model through Ollama")
+        result = generate_schema_with_local_model(conversation)
+    elif DEEPSEEK_API_KEY:
+        logger.info("Using DeepSeek API")
+        result = generate_schema_with_deepseek(conversation)
+    else:
+        logger.info("Using local mock implementation")
+        result = generate_schema_locally(conversation)
+    
+    return jsonify(result)
 
 if __name__ == '__main__':
     app.run(debug=True) 
