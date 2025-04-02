@@ -88,8 +88,7 @@ class DatasetSchemaMapping(Base):
     # Define relationship with Schema
     schema = relationship("Schema")
 
-# Drop and recreate the table to ensure correct schema
-Base.metadata.drop_all(engine)
+# Create tables if they don't exist
 Base.metadata.create_all(engine)
 
 # Create data directory if it doesn't exist
