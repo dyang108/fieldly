@@ -9,7 +9,7 @@ from .base import SchemaGenerator
 logger = logging.getLogger(__name__)
 
 
-class DeepSeekAPIGenerator(SchemaGenerator):
+class APIModelSchemaGenerator(SchemaGenerator):
     """Schema generator using the DeepSeek API"""
     
     def __init__(self, api_key: str, api_url: str = "https://api.deepseek.com/v1/chat/completions"):

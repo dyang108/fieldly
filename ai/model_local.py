@@ -9,7 +9,7 @@ from .base import SchemaGenerator
 logger = logging.getLogger(__name__)
 
 
-class DeepSeekLocalGenerator(SchemaGenerator):
+class LocalOllamaSchemaGenerator(SchemaGenerator):
     """Schema generator using a local DeepSeek model via Ollama"""
     
     def __init__(self, model: str = "deepseek-r1:14b", api_url: str = "http://localhost:11434/api/chat"):

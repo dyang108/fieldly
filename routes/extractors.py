@@ -8,9 +8,9 @@ from typing import Dict, List, Any, Optional
 
 from db import db, Schema, DatasetSchemaMapping
 from storage import create_storage
-from ai import create_schema_generator
+from ai import create_schema_generator, create_llm_extractor
 from ai.extractor import DataExtractor
-from ai.deepseek_extractor import DeepSeekExtractor
+from constants import DEFAULT_LLM_PROVIDER
 
 logger = logging.getLogger(__name__)
 
@@ -319,23 +319,32 @@ def extract_data_from_markdown(md_path: str, schema: Dict[str, Any]) -> Dict[str
     
     # Get AI configuration from app config
     use_api = current_app.config.get('USE_API', 'false').lower() == 'true'
+    provider = current_app.config.get('LLM_PROVIDER', DEFAULT_LLM_PROVIDER)
     
     # Configure the extractor
     extractor_config = {
-        'use_api': use_api
+        'use_api': use_api,
+        'provider': provider
     }
     
     if use_api:
-        extractor_config['api_key'] = current_app.config.get('DEEPSEEK_API_KEY')
-        extractor_config['cloud_api_url'] = current_app.config.get('DEEPSEEK_API_URL', 
-                                                                   'https://api.deepseek.com/v1/chat/completions')
+        # API keys for different providers
+        if provider == 'deepseek':
+            extractor_config['api_key'] = current_app.config.get('DEEPSEEK_API_KEY')
+            extractor_config['api_url'] = current_app.config.get('DEEPSEEK_API_URL')
+        elif provider == 'openai':
+            extractor_config['api_key'] = current_app.config.get('OPENAI_API_KEY')
+            extractor_config['api_url'] = current_app.config.get('OPENAI_API_URL')
+        elif provider == 'anthropic':
+            extractor_config['api_key'] = current_app.config.get('ANTHROPIC_API_KEY')
+            extractor_config['api_url'] = current_app.config.get('ANTHROPIC_API_URL')
     else:
-        extractor_config['model'] = current_app.config.get('OLLAMA_MODEL', 'deepseek-r1:14b')
-        extractor_config['api_url'] = current_app.config.get('OLLAMA_API_URL', 
-                                                           'http://localhost:11434/api/chat')
+        # Local model configuration
+        extractor_config['model'] = current_app.config.get(f'{provider.upper()}_LOCAL_MODEL')
+        extractor_config['api_url'] = current_app.config.get(f'{provider.upper()}_LOCAL_API_URL')
     
-    # Initialize the extractor
-    extractor = DeepSeekExtractor(**extractor_config)
+    # Initialize the extractor using the factory function
+    extractor = create_llm_extractor(**extractor_config)
     
     # Process each chunk and accumulate data
     accumulated_data = {}
@@ -344,7 +353,7 @@ def extract_data_from_markdown(md_path: str, schema: Dict[str, Any]) -> Dict[str
         
         # Extract data from the chunk
         chunk_data = extractor.extract_data(chunk, schema)
-        print(f"Chunk data: {chunk_data}")
+        
         # Merge the chunk data into accumulated data
         accumulated_data = merge_chunk_data(accumulated_data, chunk_data)
         
