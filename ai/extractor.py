@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 import json
 import re
 import logging
@@ -57,55 +57,88 @@ It is okay if the JSON object is empty. It is okay if the JSON object is not com
 
 Response:"""
     
-    def filter_data_by_schema(self, data: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, Any]:
+    def filter_data_by_schema(self, data: Any, schema: Dict[str, Any]) -> Any:
         """
         Filter data to only include fields defined in the schema
         
         Args:
-            data: Extracted data to filter
+            data: Extracted data to filter (any type)
             schema: Schema defining allowed fields and structure
             
         Returns:
             Filtered data containing only schema-defined fields
         """
-        if not isinstance(data, dict) or not isinstance(schema, dict):
+        # Handle null/None values
+        if data is None:
+            return None
+            
+        # Handle primitive types (strings, numbers, booleans)
+        if isinstance(data, (str, int, float, bool)):
             return data
             
-        filtered_data = {}
-        
-        for key, value in data.items():
-            if key not in schema:
-                continue
+        # Handle arrays/lists
+        if isinstance(data, list):
+            # If schema has items definition, apply it to each element
+            if isinstance(schema, dict) and 'items' in schema:
+                return [self.filter_data_by_schema(item, schema['items']) for item in data]
+            # Otherwise, return the list as is
+            return data
+            
+        # Handle objects/dictionaries
+        if isinstance(data, dict):
+            # Get schema properties (fields that are allowed)
+            # If this is a top-level schema with a properties field, use that
+            properties = schema.get('properties', {})
+            
+            # If no properties found but schema is itself a dictionary of field definitions,
+            # use the schema directly (for nested objects)
+            if not properties and all(not k.startswith('$') for k in schema.keys()):
+                properties = schema
                 
-            if isinstance(value, dict) and isinstance(schema[key], dict):
-                # Recursively filter nested dictionaries
-                filtered_data[key] = self.filter_data_by_schema(value, schema[key])
-            elif isinstance(value, list) and isinstance(schema[key], dict) and 'items' in schema[key]:
-                # Handle arrays of objects
-                if isinstance(schema[key]['items'], dict):
-                    filtered_data[key] = [
-                        self.filter_data_by_schema(item, schema[key]['items'])
-                        for item in value
-                    ]
-                else:
-                    filtered_data[key] = value
-            else:
-                # For primitive types, just copy the value
-                filtered_data[key] = value
+            # If still no properties, return data as is
+            if not properties:
+                return data
                 
-        return filtered_data
+            # Filter the data according to properties
+            filtered_data = {}
+            for key, value in data.items():
+                # If key is in properties, process it
+                if key in properties:
+                    # Get the schema for this property
+                    prop_schema = properties[key]
+                    
+                    # Apply filtering recursively
+                    filtered_value = self.filter_data_by_schema(value, prop_schema)
+                    filtered_data[key] = filtered_value
+                    
+            return filtered_data
+            
+        # For any other type, return as is
+        return data
     
-    def clean_json_response(self, response: str, schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def clean_json_response(self, response: str, schema: Union[Dict[str, Any], str]) -> Optional[Dict[str, Any]]:
         """
         Clean and extract JSON from a model response, filtering to match schema
         
         Args:
             response: Raw response from the model
-            schema: Schema to filter the extracted data against
+            schema: Schema to filter the extracted data against (can be dict or JSON string)
             
         Returns:
             Parsed and filtered JSON data or None if parsing fails
         """
+        # Ensure schema is a dictionary
+        if isinstance(schema, str):
+            try:
+                schema = json.loads(schema)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse schema JSON: {str(e)}")
+                return None
+                
+        if not isinstance(schema, dict):
+            logger.error(f"Schema must be a dictionary or valid JSON string, got {type(schema)}")
+            return None
+            
         try:
             # First try direct JSON parsing
             data = json.loads(response)

@@ -344,7 +344,7 @@ def extract_data_from_markdown(md_path: str, schema: Dict[str, Any]) -> Dict[str
         
         # Extract data from the chunk
         chunk_data = extractor.extract_data(chunk, schema)
-        
+        print(f"Chunk data: {chunk_data}")
         # Merge the chunk data into accumulated data
         accumulated_data = merge_chunk_data(accumulated_data, chunk_data)
         
