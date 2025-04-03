@@ -1,3 +1,4 @@
+import React from 'react';
 import { useState, useEffect } from 'react';
 import {
   Box,
@@ -34,6 +35,13 @@ interface Schema {
   created_at: string;
 }
 
+interface FileInfo {
+  name: string;
+  path: string;
+  size?: number;
+  last_modified?: string;
+}
+
 interface DatasetSchemaMapping {
   id?: number;
   datasetName: string;
@@ -41,7 +49,7 @@ interface DatasetSchemaMapping {
   schemaId: number | null;
   schemaName: string | null;
   created_at?: string;
-  exampleFiles?: string[];
+  exampleFiles?: Array<string | FileInfo>;
 }
 
 interface MappingResponse {
@@ -279,14 +287,14 @@ export default function DatasetGrid() {
           </Button>
         </Paper>
       ) : (
-        <Grid container spacing={3}>
+        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
           {mappings.map((mapping) => {
             const mappingKey = `${mapping.source}-${mapping.datasetName}`;
             const isApplying = applyingSchema === mappingKey;
             const isLoadingFiles = loadingFiles[mappingKey];
             
             return (
-              <Grid item xs={12} sm={6} md={4} key={mappingKey}>
+              <Box key={mappingKey} sx={{ width: { xs: '100%', sm: 'calc(50% - 12px)', md: 'calc(33.33% - 16px)' } }}>
                 <Card elevation={3} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
                   <CardHeader
                     avatar={
@@ -322,7 +330,7 @@ export default function DatasetGrid() {
                       <Box component="ul" sx={{ pl: 2, mt: 1 }}>
                         {mapping.exampleFiles.map((file, index) => (
                           <Typography component="li" variant="body2" key={index}>
-                            {file}
+                            {typeof file === 'string' ? file : (file.name || file.path)}
                           </Typography>
                         ))}
                       </Box>
@@ -351,10 +359,10 @@ export default function DatasetGrid() {
                     </IconButton>
                   </CardActions>
                 </Card>
-              </Grid>
+              </Box>
             );
           })}
-        </Grid>
+        </Box>
       )}
     </Box>
   );

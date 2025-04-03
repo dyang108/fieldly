@@ -229,4 +229,89 @@ def apply_schema_to_dataset(source, dataset_name):
         logger.error(f"Error applying schema to dataset: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
     finally:
+        db.close_session(session)
+
+
+@datasets_bp.route('/dataset-files/<source>/<path:dataset_name>', methods=['GET'])
+def get_dataset_files_v2(source, dataset_name):
+    """Get all files in a dataset"""
+    try:
+        logger.info(f"Starting GET /api/dataset-files/{source}/{dataset_name} request")
+        
+        # Get storage configuration from app config
+        storage_config = {}
+        
+        if source == 's3':
+            storage_config = {
+                'bucket_name': current_app.config.get('S3_BUCKET_NAME'),
+                'aws_access_key_id': current_app.config.get('AWS_ACCESS_KEY_ID'),
+                'aws_secret_access_key': current_app.config.get('AWS_SECRET_ACCESS_KEY'),
+                'region_name': current_app.config.get('AWS_REGION')
+            }
+        else:
+            storage_config = {
+                'storage_path': current_app.config.get('LOCAL_STORAGE_PATH', '.data')
+            }
+        
+        # Create storage instance
+        storage = create_storage(source, storage_config)
+        
+        # Get files from storage
+        files = storage.list_files(dataset_name)
+        logger.info(f"Found {len(files)} files in dataset {dataset_name}")
+        
+        return jsonify({
+            'dataset': dataset_name,
+            'source': source,
+            'files': files
+        })
+    except Exception as e:
+        logger.error(f"Error in GET /api/dataset-files/{source}/{dataset_name}: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@datasets_bp.route('/dataset-mapping/<source>/<path:dataset_name>', methods=['GET'])
+def get_dataset_mapping(source, dataset_name):
+    """Get dataset-schema mapping for a specific dataset"""
+    session = db.get_session()
+    try:
+        logger.info(f"Starting GET /api/dataset-mapping/{source}/{dataset_name} request")
+        
+        # Find the mapping
+        mapping = session.query(DatasetSchemaMapping).filter_by(
+            dataset_name=dataset_name,
+            source=source
+        ).first()
+        
+        if not mapping:
+            logger.info(f"No mapping found for dataset {dataset_name} (source: {source})")
+            return jsonify({
+                'dataset_name': dataset_name,
+                'source': source,
+                'schema_id': None,
+                'schema_name': None
+            })
+        
+        # Get schema name if available
+        schema_name = None
+        if mapping.schema_id:
+            schema = session.query(Schema).get(mapping.schema_id)
+            if schema:
+                schema_name = schema.name
+                
+        result = {
+            'id': mapping.id,
+            'dataset_name': mapping.dataset_name,
+            'source': mapping.source,
+            'schema_id': mapping.schema_id,
+            'schema_name': schema_name,
+            'created_at': mapping.created_at.isoformat() if mapping.created_at else None
+        }
+        
+        logger.info(f"Successfully retrieved mapping for dataset {dataset_name}")
+        return jsonify(result)
+    except Exception as e:
+        logger.error(f"Error in GET /api/dataset-mapping/{source}/{dataset_name}: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+    finally:
         db.close_session(session) 
