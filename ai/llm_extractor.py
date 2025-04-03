@@ -29,6 +29,7 @@ class LLMExtractor(DataExtractor):
             temperature: Temperature for model generation (default from constants)
         """
         # Get provider from argument, environment variable, or default constant
+        print(f"provider: {provider}, os.environ.get('LLM_PROVIDER'): {os.environ.get('LLM_PROVIDER')}, DEFAULT_LLM_PROVIDER: {DEFAULT_LLM_PROVIDER}")
         self.provider = provider or os.environ.get('LLM_PROVIDER') or DEFAULT_LLM_PROVIDER
         self.use_api = use_api
         self.temperature = temperature

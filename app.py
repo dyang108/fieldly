@@ -2,18 +2,14 @@ import os
 import logging
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
-from dotenv import load_dotenv
 
 from db import init_db
 from routes import register_blueprints
-from constants import DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_API_URL, DEFAULT_DATABASE_URL
+from constants import MODEL_CONFIGS, DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_API_PATH, DEFAULT_DATABASE_NAME
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
-# Load environment variables
-load_dotenv()
 
 # Create Flask app
 app = Flask(__name__,
@@ -45,22 +41,20 @@ app.config.update(
     
     # AI configuration
     USE_LOCAL_MODEL=os.getenv('USE_LOCAL_MODEL', 'true'),
-    OLLAMA_MODEL=DEFAULT_LOCAL_MODEL,
-    OLLAMA_API_URL=DEFAULT_OLLAMA_API_URL,
+    OLLAMA_MODEL=MODEL_CONFIGS['deepseek']['local']['model'],
+    OLLAMA_API_URL=f"{DEFAULT_OLLAMA_HOST}{DEFAULT_OLLAMA_API_PATH}",
     DEEPSEEK_API_KEY=os.getenv('DEEPSEEK_API_KEY', ''),
     DEEPSEEK_API_URL=os.getenv('DEEPSEEK_API_URL', 'https://api.deepseek.com/v1/chat/completions'),
     
     # Database configuration
-    DATABASE_URL=DEFAULT_DATABASE_URL
+    DATABASE_URL=f"sqlite:///{DEFAULT_DATABASE_NAME}"
 )
-
 
 # Initialize the database
 init_db(app.config['DATABASE_URL'], drop_first=False)
 
 # Register blueprints
 register_blueprints(app)
-
 
 # Serve the React app
 @app.route('/')
@@ -74,7 +68,6 @@ def serve(path):
         return send_from_directory(app.static_folder, path)
     else:
         return send_from_directory(app.static_folder, 'index.html')
-
 
 if __name__ == '__main__':
     app.run(debug=True) 

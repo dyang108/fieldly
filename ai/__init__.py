@@ -46,7 +46,8 @@ def create_llm_extractor(use_api: bool = False, api_key: Optional[str] = None,
     """
     # Get provider from argument, environment variable, or default constant
     provider = provider or os.environ.get('LLM_PROVIDER') or DEFAULT_LLM_PROVIDER
-    
+    print(f"Provider: {provider}, os.environ.get('LLM_PROVIDER'): {os.environ.get('LLM_PROVIDER')}, DEFAULT_LLM_PROVIDER: {DEFAULT_LLM_PROVIDER}")
+
     # Create and return the extractor
     return LLMExtractor(use_api=use_api, api_key=api_key, provider=provider, **kwargs)
 

@@ -5,7 +5,7 @@ import requests
 from typing import List, Dict, Any, Optional
 
 from .base import SchemaGenerator
-from constants import DEFAULT_LOCAL_MODEL
+from constants import DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_API_URL
 
 logger = logging.getLogger(__name__)
 
@@ -13,13 +13,13 @@ logger = logging.getLogger(__name__)
 class LocalOllamaSchemaGenerator(SchemaGenerator):
     """Schema generator using a local DeepSeek model via Ollama"""
     
-    def __init__(self, model: str = DEFAULT_LOCAL_MODEL, api_url: str = "http://localhost:11434/api/chat"):
+    def __init__(self, model: str = DEFAULT_LOCAL_MODEL, api_url: str = DEFAULT_OLLAMA_API_URL):
         """
         Initialize the local model interface.
         
         Args:
             model: Model name in Ollama (default: DEFAULT_LOCAL_MODEL)
-            api_url: URL for the Ollama API
+            api_url: URL for the Ollama API (default: DEFAULT_OLLAMA_API_URL)
         """
         self.model = model
         self.api_url = api_url

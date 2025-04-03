@@ -2,7 +2,7 @@ import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 from .models import Base
-from constants import DEFAULT_DATABASE_URL
+from constants import DEFAULT_DATABASE_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class Database:
     """Database connection and session management"""
     
-    def __init__(self, database_url: str = "sqlite:///schemas.db"):
+    def __init__(self, database_url: str = f"sqlite:///{DEFAULT_DATABASE_NAME}"):
         """
         Initialize database connection
         
@@ -66,7 +66,7 @@ class Database:
 db = Database()
 
 
-def init_db(database_url: str = "sqlite:///schemas.db", drop_first: bool = False) -> None:
+def init_db(database_url: str = f"sqlite:///{DEFAULT_DATABASE_NAME}", drop_first: bool = False) -> None:
     """
     Initialize the database
     

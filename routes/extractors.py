@@ -317,9 +317,9 @@ def extract_data_from_markdown(md_path: str, schema: Dict[str, Any]) -> Dict[str
     chunks = split_content_into_chunks(content)
     logger.info(f"Split content into {len(chunks)} chunks")
     
-    # Get AI configuration from app config
-    use_api = current_app.config.get('USE_API', 'false').lower() == 'true'
-    provider = current_app.config.get('LLM_PROVIDER', DEFAULT_LLM_PROVIDER)
+    # Get AI configuration from environment variables
+    provider = os.environ.get('LLM_PROVIDER', DEFAULT_LLM_PROVIDER)
+    use_api = os.environ.get('USE_API', 'false').lower() == 'true'
     
     # Configure the extractor
     extractor_config = {

@@ -9,7 +9,7 @@ from requests.exceptions import RequestException
 import os
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from constants import DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_HOST
+from constants import DEFAULT_LOCAL_MODEL, OLLAMA_HOST as DEFAULT_OLLAMA_HOST
 
 # Set up logging
 logging.basicConfig(

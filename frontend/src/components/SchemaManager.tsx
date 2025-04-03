@@ -227,7 +227,15 @@ export default function SchemaManager() {
     setExtracting(true)
     setExtractionResult(null)
     try {
-      const response = await api.post(`/api/extract/${source}/${datasetName}`)
+      const response = await api.post(
+        `/api/extract/${source}/${datasetName}`,
+        generatedSchema,
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      )
       setExtractionResult(response.data)
       setNotification(`Data extraction completed for ${datasetName}`)
     } catch (err) {
