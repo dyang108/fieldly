@@ -2,6 +2,7 @@ import logging
 from flask import Blueprint, request, jsonify, current_app
 
 from ai import create_schema_generator
+from constants import DEFAULT_LOCAL_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,7 @@ def generate_schema():
         if use_local_model:
             ai_type = 'deepseek_local'
             ai_config = {
-                'model': current_app.config.get('OLLAMA_MODEL', 'deepseek-r1:14b'),
+                'model': current_app.config.get('OLLAMA_MODEL', DEFAULT_LOCAL_MODEL),
                 'api_url': current_app.config.get('OLLAMA_API_URL', 'http://localhost:11434/api/chat')
             }
             logger.info("Using local DeepSeek model through Ollama")

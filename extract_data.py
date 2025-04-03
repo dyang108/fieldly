@@ -24,6 +24,7 @@ from flask import Flask
 from db import init_db, db, Schema, DatasetSchemaMapping
 from storage import create_storage
 from routes.extractors import process_file
+from constants import DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_API_URL, DEFAULT_DATABASE_URL
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, 
@@ -51,13 +52,13 @@ def create_app():
         
         # AI configuration
         USE_LOCAL_MODEL=os.getenv('USE_LOCAL_MODEL', 'true'),
-        OLLAMA_MODEL=os.getenv('OLLAMA_MODEL', 'deepseek-r1:14b'),
-        OLLAMA_API_URL=os.getenv('OLLAMA_API_URL', 'http://localhost:11434/api/chat'),
+        OLLAMA_MODEL=DEFAULT_LOCAL_MODEL,
+        OLLAMA_API_URL=DEFAULT_OLLAMA_API_URL,
         DEEPSEEK_API_KEY=os.getenv('DEEPSEEK_API_KEY', ''),
         DEEPSEEK_API_URL=os.getenv('DEEPSEEK_API_URL', 'https://api.deepseek.com/v1/chat/completions'),
         
         # Database configuration
-        DATABASE_URL=os.getenv('DATABASE_URL', 'sqlite:///schemas.db')
+        DATABASE_URL=DEFAULT_DATABASE_URL
     )
     
     return app

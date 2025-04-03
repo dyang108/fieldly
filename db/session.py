@@ -2,6 +2,7 @@ import logging
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, scoped_session
 from .models import Base
+from constants import DEFAULT_DATABASE_URL
 
 logger = logging.getLogger(__name__)
 

@@ -9,6 +9,7 @@ from requests.exceptions import RequestException
 import os
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from constants import DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_HOST
 
 # Set up logging
 logging.basicConfig(
@@ -17,10 +18,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-OLLAMA_API_HOST = "http://localhost:11434"
+OLLAMA_API_HOST = DEFAULT_OLLAMA_HOST
 DEEPSEEK_API_HOST = "https://api.deepseek.com/v1"
 
-def run_ollama_query(text: str, model: str = "deepseek-r1:14b", use_deepseek: bool = False, api_key: Optional[str] = None) -> str:
+def run_ollama_query(text: str, model: str = DEFAULT_LOCAL_MODEL, use_deepseek: bool = False, api_key: Optional[str] = None) -> str:
     """Run a query through either Ollama or DeepSeek API."""
     try:
         if use_deepseek:
@@ -552,7 +553,7 @@ def process_markdown_file(input_file: Path, output_file: Path, model: str, use_d
         logger.error(f"Error processing {input_file}: {str(e)}")
         return False
 
-def process_dataset(dataset_name: str, model: str = "deepseek-r1:14b", use_deepseek: bool = False, api_key: Optional[str] = None) -> None:
+def process_dataset(dataset_name: str, model: str = DEFAULT_LOCAL_MODEL, use_deepseek: bool = False, api_key: Optional[str] = None) -> None:
     """Process all markdown files in a dataset directory sequentially."""
     data_dir = Path('../.data')
     input_dir = data_dir / f"{dataset_name}-md"
@@ -585,8 +586,8 @@ def process_dataset(dataset_name: str, model: str = "deepseek-r1:14b", use_deeps
 def main():
     parser = argparse.ArgumentParser(description='Extract structured data from markdown files using LLM')
     parser.add_argument('dataset', help='Name of the dataset directory under .data/')
-    parser.add_argument('--model', default='deepseek-r1:14b',
-                      help='Model to use (default: deepseek-r1:14b)')
+    parser.add_argument('--model', default=DEFAULT_LOCAL_MODEL,
+                      help=f'Model to use (default: {DEFAULT_LOCAL_MODEL})')
     parser.add_argument('--use-deepseek', action='store_true',
                       help='Use DeepSeek API instead of local Ollama')
     parser.add_argument('--api-key', help='DeepSeek API key (can also be set via DEEPSEEK_API_KEY env var)')

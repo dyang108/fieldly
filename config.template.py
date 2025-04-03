@@ -3,6 +3,13 @@ Configuration template for the application.
 Copy this file to config.py and update the values as needed.
 """
 
+from constants import (
+    DEFAULT_LOCAL_MODEL,
+    DEFAULT_OLLAMA_API_URL,
+    DEFAULT_DATABASE_URL,
+    DEFAULT_DATABASE_NAME
+)
+
 # Storage configuration
 STORAGE_TYPE = 'local'  # 'local' or 's3'
 LOCAL_STORAGE_PATH = '.data'
@@ -37,8 +44,13 @@ ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
 OLLAMA_LOCAL_MODEL = 'llama3'
 OLLAMA_LOCAL_API_URL = 'http://localhost:11434/api/chat'
 
+# AI configuration
+USE_LOCAL_MODEL = True  # Set to False to use API models
+OLLAMA_MODEL = DEFAULT_LOCAL_MODEL  # Model name for local Ollama
+OLLAMA_API_URL = DEFAULT_OLLAMA_API_URL  # Ollama API URL
+
 # Database configuration
-SQLALCHEMY_DATABASE_URI = 'sqlite:///app.db'
+SQLALCHEMY_DATABASE_URI = DEFAULT_DATABASE_URL
 SQLALCHEMY_TRACK_MODIFICATIONS = False
 
 # Flask configuration

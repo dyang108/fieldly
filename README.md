@@ -134,4 +134,15 @@ The output files are stored in a directory named `<dataset_name>-extracted` with
 
 - `.data/<dataset_name>/`: Original PDF files
 - `.data/<dataset_name>-md/`: Intermediate markdown files
-- `.data/<dataset_name>-extracted/`: Final JSON extraction results 
+- `.data/<dataset_name>-extracted/`: Final JSON extraction results
+
+# Environment Variables
+
+The following environment variables can be set to configure the application:
+
+- `OLLAMA_MODEL`: Model name for local Ollama (default: deepseek-r1:14b)
+- `USE_LOCAL_MODEL`: Set to 'true' to use local model, 'false' for API (default: true)
+- `OLLAMA_API_URL`: URL for Ollama API (default: http://localhost:11434/api/chat)
+- `DATABASE_URL`: Database connection URL (default: sqlite:///schemas.db)
+- `DEEPSEEK_API_KEY`: API key for DeepSeek cloud API (required if using API)
+- `DEEPSEEK_API_URL`: URL for DeepSeek API (default: https://api.deepseek.com/v1/chat/completions) 
