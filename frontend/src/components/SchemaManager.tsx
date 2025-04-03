@@ -239,9 +239,20 @@ export default function SchemaManager() {
         content: response.data.message || 'I updated the schema according to your instructions.'
       }
       setEditConversation([...updatedConversation, assistantMessage])
-      
+      console.log('Response data:', response.data)
       // Update edited schema with the new version
-      setEditedSchema(response.data.updated_schema)
+      if (response.data.schema) {
+        // If we got a wrapped schema response
+        setEditedSchema(response.data.schema)
+      } else if (response.data.updated_schema) {
+        // If we got an updated schema directly
+        setEditedSchema(response.data.updated_schema)
+      } else if (response.data) {
+        // If we got the schema directly
+        setEditedSchema(response.data)
+      }
+      
+      console.log('Updated schema:', editedSchema) // Debug log
     } catch (err) {
       console.error('Error updating schema:', err)
       setError('Failed to update schema conversationally')
@@ -592,13 +603,25 @@ export default function SchemaManager() {
               
               {/* Schema Preview */}
               <Typography variant="subtitle2" gutterBottom>Current Schema:</Typography>
-              <Box sx={{ maxHeight: 150, overflowY: 'auto', border: '1px solid #eee', borderRadius: 1, mb: 2 }}>
+              <Box sx={{ maxHeight: 300, overflowY: 'auto', border: '1px solid #eee', borderRadius: 1, mb: 2 }}>
                 <ReactJson 
                   src={editedSchema || {}} 
                   theme="rjv-default" 
                   displayDataTypes={false}
-                  collapsed={1}
+                  collapsed={false}
                   style={{ padding: '8px' }}
+                  onEdit={(edit: any) => {
+                    console.log('Schema edited:', edit.updated_src)
+                    setEditedSchema(edit.updated_src)
+                  }}
+                  onAdd={(add: any) => {
+                    console.log('Schema added:', add.updated_src)
+                    setEditedSchema(add.updated_src)
+                  }}
+                  onDelete={(del: any) => {
+                    console.log('Schema deleted:', del.updated_src)
+                    setEditedSchema(del.updated_src)
+                  }}
                 />
               </Box>
               

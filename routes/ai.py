@@ -124,11 +124,16 @@ def edit_schema():
         
         # Generate updated schema
         result = schema_generator.update_schema(full_conversation, current_schema)
-        
-        return jsonify({
-            'message': result.get('message', 'Schema updated successfully'),
-            'updated_schema': result.get('schema', current_schema)
-        })
+        if result.get('failed'):
+            return jsonify({
+                'message': 'Failed to update schema',
+                'updated_schema': current_schema
+            }), 500
+        else:
+            return jsonify({
+                'message': result.get('message', 'Schema updated successfully'),
+                'updated_schema': result
+            })
     except Exception as e:
         logger.error(f"Error editing schema: {str(e)}", exc_info=True)
         return jsonify({

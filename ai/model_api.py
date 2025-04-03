@@ -170,16 +170,12 @@ Do not include any markdown formatting or code blocks. Just return the raw JSON.
             
             # If parsing failed, return current schema with error message
             return {
-                "message": "Failed to parse updated schema from API response, keeping current schema.",
-                "schema": current_schema,
-                "suggested_name": current_schema.get("title", "new_schema")
+                "failed": True,
             }
         except Exception as e:
             logger.error(f"Error updating schema: {str(e)}")
             return {
-                "message": f"Error updating schema: {str(e)}",
-                "schema": current_schema,
-                "suggested_name": current_schema.get("title", "new_schema")
+                "failed": True,
             }
     
     def _parse_response(self, content: str) -> Dict[str, Any]:
