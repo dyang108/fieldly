@@ -4,18 +4,23 @@ This module provides a single source of truth for all configuration values.
 """
 
 import os
-from typing import Dict, Any, Literal, Union
+from typing import Dict, Any, Optional, cast
+
 from dotenv import load_dotenv
+from type_definitions import Provider, StorageType, ProviderConfigs, ApiConfig
 
 class Config:
     """Application configuration"""
     
-    def __init__(self):
+    def __init__(self) -> None:
         # Load environment variables
         load_dotenv()
         
         # Storage Configuration
-        self.STORAGE_TYPE: Literal['local', 's3'] = os.getenv('STORAGE_TYPE', 'local')
+        self.STORAGE_TYPE: StorageType = cast(
+            StorageType, 
+            os.getenv('STORAGE_TYPE', 'local')
+        )
         self.LOCAL_STORAGE_PATH: str = os.getenv('LOCAL_STORAGE_PATH', '.data')
         
         # S3 Configuration
@@ -26,7 +31,10 @@ class Config:
         
         # AI Configuration
         self.USE_LOCAL_MODEL: bool = os.getenv('USE_LOCAL_MODEL', 'true').lower() == 'true'
-        self.LLM_PROVIDER: Literal['deepseek', 'openai', 'anthropic', 'ollama'] = os.getenv('LLM_PROVIDER', 'deepseek')
+        self.LLM_PROVIDER: Provider = cast(
+            Provider,
+            os.getenv('LLM_PROVIDER', 'deepseek')
+        )
         
         # Local Model Configuration
         self.OLLAMA_MODEL: str = os.getenv('OLLAMA_MODEL', 'deepseek-r1:14b')
@@ -53,11 +61,15 @@ class Config:
         self.DEBUG: bool = os.getenv('DEBUG', 'false').lower() == 'true'
         
         # Provider-specific configuration
-        self.PROVIDER_CONFIGS: Dict[str, Dict[str, Dict[str, str]]] = {
+        self.PROVIDER_CONFIGS: ProviderConfigs = {
             "deepseek": {
                 "api": {
                     "model": "deepseek-chat",
                     "api_url": self.DEEPSEEK_API_URL
+                },
+                "local": {
+                    "model": self.OLLAMA_MODEL,
+                    "api_url": self.OLLAMA_API_URL
                 }
             },
             "openai": {
@@ -76,12 +88,12 @@ class Config:
                 "local": {
                     "model": self.OLLAMA_MODEL,
                     "api_url": self.OLLAMA_API_URL
-                },
+                }
             }
         }
         
         # Model configuration (simplified version of PROVIDER_CONFIGS)
-        self.MODEL_CONFIGS: Dict[str, Dict[str, Dict[str, str]]] = {
+        self.MODEL_CONFIGS: ProviderConfigs = {
             "deepseek": {
                 "local": {
                     "model": self.OLLAMA_MODEL,

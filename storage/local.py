@@ -1,43 +1,43 @@
 import os
-import pathlib
+import logging
+import shutil
 from datetime import datetime
-from typing import List, Dict, Any, BinaryIO
+from pathlib import Path
+from typing import List, Dict, Any, BinaryIO, Optional, cast
 
 from .base import StorageInterface
+from type_definitions import FileInfo, StorageConfig
+
+logger = logging.getLogger(__name__)
 
 
 class LocalStorage(StorageInterface):
-    """Local file system storage implementation"""
+    """Local filesystem storage backend"""
     
     def __init__(self, storage_path: str = '.data'):
         """
         Initialize local storage
         
         Args:
-            storage_path: Path to store files, relative to current working directory
+            storage_path: Path to the storage directory
         """
-        self.storage_path = os.path.join(os.getcwd(), storage_path)
-        self.storage_dir = pathlib.Path(self.storage_path)
-        self.storage_dir.mkdir(parents=True, exist_ok=True)
-        # Store config as a private attribute
-        self._config = {'storage_path': self.storage_path}
+        self._storage_path = storage_path
+        self._config: StorageConfig = {'storage_path': storage_path}
+        
+        # Create storage directory if it doesn't exist
+        os.makedirs(self._storage_path, exist_ok=True)
     
     @property
-    def config(self) -> Dict[str, Any]:
-        """
-        Get the storage configuration
-        
-        Returns:
-            Dict with configuration values
-        """
+    def config(self) -> StorageConfig:
+        """Get storage configuration"""
         return self._config
     
-    def save_file(self, dataset_name: str, file_obj: BinaryIO, filename: str) -> Dict[str, Any]:
+    def save_file(self, dataset_name: str, file_obj: BinaryIO, filename: str) -> FileInfo:
         """
-        Save a file to the local file system
+        Save a file to local storage
         
         Args:
-            dataset_name: Name of the dataset (subdirectory)
+            dataset_name: Name of the dataset
             file_obj: File object to save
             filename: Name of the file
             
@@ -45,19 +45,21 @@ class LocalStorage(StorageInterface):
             Dict with file info
         """
         # Create dataset directory if it doesn't exist
-        dataset_dir = self.storage_dir / dataset_name
-        dataset_dir.mkdir(exist_ok=True)
+        dataset_path = Path(self._storage_path) / dataset_name
+        os.makedirs(dataset_path, exist_ok=True)
         
-        # Save file
-        file_path = dataset_dir / filename
-        file_obj.save(file_path)
+        # Save the file
+        file_path = dataset_path / filename
+        with open(file_path, 'wb') as f:
+            file_obj.seek(0)
+            shutil.copyfileobj(file_obj, f)
         
+        # Return file info
         return {
-            'message': 'File uploaded successfully',
-            'filename': filename,
+            'name': filename,
             'path': str(file_path),
-            'size': file_path.stat().st_size,
-            'last_modified': datetime.fromtimestamp(file_path.stat().st_mtime).isoformat()
+            'size': os.path.getsize(file_path),
+            'last_modified': datetime.fromtimestamp(os.path.getmtime(file_path)).isoformat()
         }
     
     def list_datasets(self) -> List[str]:
@@ -65,14 +67,21 @@ class LocalStorage(StorageInterface):
         List all datasets in local storage
         
         Returns:
-            List of dataset names (directory names)
+            List of dataset names
         """
-        if not self.storage_dir.exists():
-            return []
+        datasets = []
+        storage_path = Path(self._storage_path)
         
-        return [d.name for d in self.storage_dir.glob('*') if d.is_dir()]
+        if not storage_path.exists():
+            return []
+            
+        for item in storage_path.iterdir():
+            if item.is_dir() and not item.name.startswith('.'):
+                datasets.append(item.name)
+                
+        return datasets
     
-    def list_files(self, dataset_name: str) -> List[Dict[str, Any]]:
+    def list_files(self, dataset_name: str) -> List[FileInfo]:
         """
         List all files in a dataset
         
@@ -82,45 +91,66 @@ class LocalStorage(StorageInterface):
         Returns:
             List of file info dicts
         """
-        dataset_path = self.storage_dir / dataset_name
+        files: List[FileInfo] = []
+        dataset_path = Path(self._storage_path) / dataset_name
         
-        if not dataset_path.exists() or not dataset_path.is_dir():
+        if not dataset_path.exists():
             return []
-        
-        files = []
-        for file_path in dataset_path.glob('*'):
-            if file_path.is_file():
-                stat = file_path.stat()
+            
+        for item in dataset_path.iterdir():
+            if item.is_file():
                 files.append({
-                    'key': os.path.join(dataset_name, file_path.name),
-                    'size': stat.st_size,
-                    'last_modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
-                    'name': file_path.name
+                    'name': item.name,
+                    'path': str(item),
+                    'size': item.stat().st_size,
+                    'last_modified': datetime.fromtimestamp(item.stat().st_mtime).isoformat()
                 })
-        
+                
         return files
     
-    def get_file(self, dataset_name: str, filename: str) -> Any:
+    def get_file(self, dataset_name: str, filename: str) -> Optional[BinaryIO]:
         """
-        Get a file from storage
+        Get a file from local storage
         
         Args:
             dataset_name: Name of the dataset
             filename: Name of the file
             
         Returns:
-            File path object
+            File object or None if the file doesn't exist
         """
-        file_path = self.storage_dir / dataset_name / filename
+        file_path = Path(self._storage_path) / dataset_name / filename
         
-        if not file_path.exists() or not file_path.is_file():
+        if not file_path.exists():
             return None
+            
+        return open(file_path, 'rb')
+    
+    def read_file(self, file_path: str) -> Optional[str]:
+        """
+        Read text file content from storage
         
-        return file_path
+        Args:
+            file_path: Path to the file relative to storage root
+            
+        Returns:
+            File content as string or None if file not found or cannot be read
+        """
+        full_path = Path(self._storage_path) / file_path
+        
+        if not full_path.exists():
+            return None
+            
+        try:
+            with open(full_path, 'r', encoding='utf-8') as f:
+                return f.read()
+        except Exception as e:
+            logger.error(f"Error reading file {file_path}: {str(e)}")
+            return None
     
     def delete_file(self, dataset_name: str, filename: str) -> bool:
         """
-        Delete a file from storage
+        Delete a file from local storage
         
         Args:
             dataset_name: Name of the dataset
@@ -129,20 +159,21 @@ class LocalStorage(StorageInterface):
         Returns:
             True if successful, False otherwise
         """
-        file_path = self.storage_dir / dataset_name / filename
+        file_path = Path(self._storage_path) / dataset_name / filename
         
-        if not file_path.exists() or not file_path.is_file():
-            return False
-        
-        try:
-            file_path.unlink()
-            return True
-        except Exception:
+        if not file_path.exists():
             return False
             
+        try:
+            os.remove(file_path)
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting file {filename}: {str(e)}")
+            return False
+    
     def dataset_exists(self, dataset_name: str) -> bool:
         """
-        Check if a dataset exists in storage
+        Check if a dataset exists in local storage
         
         Args:
             dataset_name: Name of the dataset
@@ -150,12 +181,12 @@ class LocalStorage(StorageInterface):
         Returns:
             True if the dataset exists, False otherwise
         """
-        dataset_path = self.storage_dir / dataset_name
+        dataset_path = Path(self._storage_path) / dataset_name
         return dataset_path.exists() and dataset_path.is_dir()
-        
+    
     def create_dataset(self, dataset_name: str) -> bool:
         """
-        Create a new dataset in storage
+        Create a new dataset in local storage
         
         Args:
             dataset_name: Name of the dataset
@@ -163,9 +194,14 @@ class LocalStorage(StorageInterface):
         Returns:
             True if successful, False otherwise
         """
-        try:
-            dataset_path = self.storage_dir / dataset_name
-            dataset_path.mkdir(exist_ok=True, parents=True)
+        dataset_path = Path(self._storage_path) / dataset_name
+        
+        if dataset_path.exists():
             return True
-        except Exception:
+            
+        try:
+            os.makedirs(dataset_path, exist_ok=True)
+            return True
+        except Exception as e:
+            logger.error(f"Error creating dataset {dataset_name}: {str(e)}")
             return False 

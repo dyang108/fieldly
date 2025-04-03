@@ -3,21 +3,91 @@ import os
 import json
 import subprocess
 from pathlib import Path
-from flask import Blueprint, request, jsonify, current_app
-from typing import Dict, List, Any, Optional
+from flask import Blueprint, request, jsonify, current_app, Response
+from typing import Dict, List, Any, Optional, Union, TypedDict, Tuple, cast, Literal
 
 from db import db, Schema, DatasetSchemaMapping
-from storage import create_storage
+from storage import create_storage, Storage
 from ai import create_schema_generator, create_llm_extractor
 from ai.extractor import DataExtractor
-from constants import DEFAULT_LLM_PROVIDER
+from constants import (
+    STORAGE_TYPE, LOCAL_STORAGE_PATH, S3_BUCKET_NAME, AWS_ACCESS_KEY_ID,
+    AWS_SECRET_ACCESS_KEY, AWS_REGION, USE_LOCAL_MODEL, LLM_PROVIDER,
+    DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, MODEL_CONFIGS,
+    DEFAULT_LLM_PROVIDER
+)
 
 logger = logging.getLogger(__name__)
 
 extractors_bp = Blueprint('extractors', __name__, url_prefix='/api')
 
+class FileResult(TypedDict, total=False):
+    """Result of processing a single file"""
+    filename: str
+    status: Literal['success', 'error']
+    output_file: Optional[str]
+    message: Optional[str]
+
+class ExtractorResponse(TypedDict, total=False):
+    """Response for extraction endpoint"""
+    success: bool
+    error: Optional[str]
+    dataset: Optional[str]
+    output_directory: Optional[str]
+    processed_files: Optional[int]
+    results: Optional[List[FileResult]]
+
+class StorageConfig(TypedDict, total=False):
+    """Storage configuration options"""
+    bucket_name: Optional[str]
+    aws_access_key_id: Optional[str]
+    aws_secret_access_key: Optional[str]
+    region_name: Optional[str]
+    storage_path: Optional[str]
+
+def get_storage_config() -> StorageConfig:
+    """Get storage configuration based on environment variables"""
+    if STORAGE_TYPE == 's3':
+        return {
+            'bucket_name': S3_BUCKET_NAME,
+            'aws_access_key_id': AWS_ACCESS_KEY_ID,
+            'aws_secret_access_key': AWS_SECRET_ACCESS_KEY,
+            'region_name': AWS_REGION
+        }
+    else:
+        return {
+            'storage_path': LOCAL_STORAGE_PATH
+        }
+
+def get_extractor_config() -> Dict[str, Any]:
+    """Get extractor configuration based on environment variables"""
+    config: Dict[str, Any] = {
+        'use_api': not USE_LOCAL_MODEL,
+        'provider': LLM_PROVIDER
+    }
+    
+    if not USE_LOCAL_MODEL:
+        # Set API key based on provider
+        if LLM_PROVIDER == 'deepseek':
+            config['api_key'] = DEEPSEEK_API_KEY
+        elif LLM_PROVIDER == 'openai':
+            config['api_key'] = OPENAI_API_KEY
+        elif LLM_PROVIDER == 'anthropic':
+            config['api_key'] = ANTHROPIC_API_KEY
+    
+    # Get model and API URL from MODEL_CONFIGS
+    mode = 'api' if not USE_LOCAL_MODEL else 'local'
+    provider_config = MODEL_CONFIGS.get(LLM_PROVIDER, {}).get(mode, {})
+    
+    if 'model' in provider_config:
+        config['model'] = provider_config['model']
+    if 'api_url' in provider_config:
+        config['api_url'] = provider_config['api_url']
+    
+    return config
+
 @extractors_bp.route('/extract/<source>/<path:dataset_name>', methods=['POST'])
-def extract_dataset(source: str, dataset_name: str):
+def extract_dataset(source: str, dataset_name: str) -> Tuple[Response, int]:
     """
     Extract structured data from a dataset using its associated schema
     
@@ -30,47 +100,42 @@ def extract_dataset(source: str, dataset_name: str):
        c. Save as JSON
     """
     session = db.get_session()
+    schema_data: Optional[Dict[str, Any]] = None
+    
+    # Get schema from request JSON if provided
+    if request.is_json:
+        schema_data = request.get_json()
+        logger.info(f"Using schema from request")
+        
     try:
         logger.info(f"Starting extraction for dataset: {dataset_name} (source: {source})")
         
-        # Get storage configuration
-        storage_type = current_app.config.get('STORAGE_TYPE', 'local')
-        storage_config = {}
+        # Get storage configuration and create storage instance
+        storage_config = get_storage_config()
+        storage = create_storage(STORAGE_TYPE, storage_config)
         
-        if storage_type == 's3':
-            storage_config = {
-                'bucket_name': current_app.config.get('S3_BUCKET_NAME'),
-                'aws_access_key_id': current_app.config.get('AWS_ACCESS_KEY_ID'),
-                'aws_secret_access_key': current_app.config.get('AWS_SECRET_ACCESS_KEY'),
-                'region_name': current_app.config.get('AWS_REGION')
-            }
-        else:
-            storage_config = {
-                'storage_path': current_app.config.get('LOCAL_STORAGE_PATH', '.data')
-            }
-        
-        # Create storage instance
-        storage = create_storage(storage_type, storage_config)
-        
-        # Get dataset mapping to find schema
-        mapping = session.query(DatasetSchemaMapping).filter_by(
-            dataset_name=dataset_name,
-            source=source
-        ).first()
-        
-        if not mapping or not mapping.schema_id:
-            return jsonify({
-                'error': f'No schema associated with dataset {dataset_name}'
-            }), 400
-        
-        # Get schema
-        schema = session.query(Schema).get(mapping.schema_id)
-        if not schema:
-            return jsonify({
-                'error': f'Schema with ID {mapping.schema_id} not found'
-            }), 404
+        # If schema not provided in request, get from database
+        if not schema_data:
+            # Get dataset mapping to find schema
+            mapping = session.query(DatasetSchemaMapping).filter_by(
+                dataset_name=dataset_name,
+                source=source
+            ).first()
             
-        logger.info(f"Using schema: {schema.name} (ID: {schema.id})")
+            if not mapping or not mapping.schema_id:
+                return jsonify({
+                    'error': f'No schema associated with dataset {dataset_name}'
+                }), 400
+            
+            # Get schema
+            schema = session.query(Schema).get(mapping.schema_id)
+            if not schema:
+                return jsonify({
+                    'error': f'Schema with ID {mapping.schema_id} not found'
+                }), 404
+                
+            logger.info(f"Using schema: {schema.name} (ID: {schema.id})")
+            schema_data = schema.schema
         
         # Get files in dataset
         files = storage.list_files(dataset_name)
@@ -88,14 +153,14 @@ def extract_dataset(source: str, dataset_name: str):
             logger.info(f"Created output directory: {output_dir}")
         
         # Process each file
-        results = []
+        results: List[FileResult] = []
         for file_info in files:
-            filename = file_info.get('name')
+            filename = file_info.get('name', '')
             if not filename.lower().endswith('.pdf'):
                 logger.info(f"Skipping non-PDF file: {filename}")
                 continue
                 
-            result = process_file(storage, dataset_name, output_dir, filename, schema.schema)
+            result = process_file(storage, dataset_name, output_dir, filename, schema_data)
             results.append(result)
             
         return jsonify({
@@ -104,7 +169,7 @@ def extract_dataset(source: str, dataset_name: str):
             'output_directory': output_dir,
             'processed_files': len(results),
             'results': results
-        })
+        }), 200
         
     except Exception as e:
         logger.error(f"Error in extraction process: {str(e)}", exc_info=True)
@@ -113,7 +178,8 @@ def extract_dataset(source: str, dataset_name: str):
         db.close_session(session)
 
 
-def process_file(storage, dataset_name: str, output_dir: str, filename: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+def process_file(storage: Storage, dataset_name: str, output_dir: str, 
+                filename: str, schema: Dict[str, Any]) -> FileResult:
     """Process a single file through the extraction pipeline"""
     try:
         logger.info(f"Starting extraction pipeline for file: {filename}")
@@ -122,7 +188,7 @@ def process_file(storage, dataset_name: str, output_dir: str, filename: str, sch
         # Get local path if using local storage
         if isinstance(storage.config.get('storage_path'), str):
             # For local storage
-            base_path = Path(storage.config['storage_path'])
+            base_path = Path(cast(str, storage.config['storage_path']))
             pdf_path = base_path / dataset_name / filename
             md_path = base_path / f"{dataset_name}-md" / f"{filename}.md"
             json_path = base_path / output_dir / f"{filename}.json"
@@ -187,9 +253,9 @@ def convert_pdf_to_markdown(pdf_path: str, md_path: str) -> None:
 
 def split_content_into_chunks(content: str, max_chunk_size: int = 4000) -> List[str]:
     """Split markdown content into smaller chunks while preserving structure."""
-    chunks = []
-    current_chunk = []
-    current_size = 0
+    chunks: List[str] = []
+    current_chunk: List[str] = []
+    current_size: int = 0
     
     # Split by paragraphs
     paragraphs = content.split('\n\n')
@@ -249,12 +315,11 @@ def merge_chunk_data(accumulated_data: Dict[str, Any], chunk_data: Dict[str, Any
                             if metric_value is not None and metric not in existing_period["metrics"]:
                                 existing_period["metrics"][metric] = metric_value
                     else:
+                        # New period, add it
                         merged[key].append(period_data)
             else:
-                # For other lists, just append new items
-                for item in value:
-                    if item not in merged[key]:
-                        merged[key].append(item)
+                # For other lists, append new items
+                merged[key].extend([x for x in value if x not in merged[key]])
     
     return merged
 

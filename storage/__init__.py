@@ -1,44 +1,47 @@
-from typing import Dict, Any, Optional
+"""
+Storage module for Schema Generator.
+This module provides storage backends for storing datasets and files.
+"""
 
-from .base import StorageInterface
+import logging
+from typing import Dict, Any, Optional, cast, Union
+
+from .base import StorageInterface, Storage
 from .local import LocalStorage
 from .s3 import S3Storage
+from type_definitions import StorageType, StorageConfig
 
+logger = logging.getLogger(__name__)
 
-def create_storage(storage_type: str, config: Optional[Dict[str, Any]] = None) -> StorageInterface:
+def create_storage(storage_type: StorageType, config: Optional[StorageConfig] = None) -> Storage:
     """
-    Create a storage instance based on type and configuration
+    Create a storage instance
     
     Args:
-        storage_type: 'local' or 's3'
-        config: Configuration dict with storage-specific parameters
+        storage_type: Type of storage ('local' or 's3')
+        config: Configuration parameters
         
     Returns:
-        Storage instance implementing StorageInterface
-        
+        Storage instance
+    
     Raises:
-        ValueError: If storage_type is not supported
+        ValueError: If storage_type is invalid
     """
     if config is None:
         config = {}
-    
-    if storage_type.lower() == 'local':
+        
+    if storage_type == 'local':
         storage_path = config.get('storage_path', '.data')
         return LocalStorage(storage_path=storage_path)
-    
-    elif storage_type.lower() == 's3':
-        if 'bucket_name' not in config:
-            raise ValueError("S3 storage requires 'bucket_name' in config")
-            
+    elif storage_type == 's3':
         return S3Storage(
-            bucket_name=config['bucket_name'],
-            aws_access_key_id=config.get('aws_access_key_id'),
-            aws_secret_access_key=config.get('aws_secret_access_key'),
-            region_name=config.get('region_name')
+            bucket_name=config.get('bucket_name', ''),
+            aws_access_key_id=cast(str, config.get('aws_access_key_id', '')),
+            aws_secret_access_key=cast(str, config.get('aws_secret_access_key', '')),
+            region_name=cast(str, config.get('region_name', ''))
         )
-    
     else:
-        raise ValueError(f"Unsupported storage type: {storage_type}")
+        raise ValueError(f"Invalid storage type: {storage_type}")
 
 
 __all__ = ['StorageInterface', 'LocalStorage', 'S3Storage', 'create_storage'] 

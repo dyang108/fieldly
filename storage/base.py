@@ -1,6 +1,17 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Dict, Any, BinaryIO
+from typing import List, Dict, Any, BinaryIO, Optional, Protocol, Union, IO
+
+from type_definitions import StorageConfig, FileInfo
+
+
+class Storage(Protocol):
+    """Protocol class for storage backends"""
+    
+    @property
+    def config(self) -> StorageConfig:
+        """Get the storage configuration"""
+        ...
 
 
 class StorageInterface(ABC):
@@ -8,7 +19,7 @@ class StorageInterface(ABC):
     
     @property
     @abstractmethod
-    def config(self) -> Dict[str, Any]:
+    def config(self) -> StorageConfig:
         """
         Get the storage configuration
         
@@ -18,7 +29,7 @@ class StorageInterface(ABC):
         pass
     
     @abstractmethod
-    def save_file(self, dataset_name: str, file_obj: BinaryIO, filename: str) -> Dict[str, Any]:
+    def save_file(self, dataset_name: str, file_obj: BinaryIO, filename: str) -> FileInfo:
         """
         Save a file to storage
         
@@ -43,7 +54,7 @@ class StorageInterface(ABC):
         pass
     
     @abstractmethod
-    def list_files(self, dataset_name: str) -> List[Dict[str, Any]]:
+    def list_files(self, dataset_name: str) -> List[FileInfo]:
         """
         List all files in a dataset
         
@@ -56,7 +67,7 @@ class StorageInterface(ABC):
         pass
     
     @abstractmethod
-    def get_file(self, dataset_name: str, filename: str) -> Any:
+    def get_file(self, dataset_name: str, filename: str) -> Optional[BinaryIO]:
         """
         Get a file from storage
         
@@ -65,7 +76,20 @@ class StorageInterface(ABC):
             filename: Name of the file
             
         Returns:
-            File-like object
+            File-like object or None if not found
+        """
+        pass
+    
+    @abstractmethod
+    def read_file(self, file_path: str) -> Optional[str]:
+        """
+        Read text file content from storage
+        
+        Args:
+            file_path: Path to the file relative to storage root
+            
+        Returns:
+            File content as string or None if file not found or cannot be read
         """
         pass
     

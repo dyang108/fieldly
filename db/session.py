@@ -1,6 +1,8 @@
 import logging
+from typing import Optional, Any
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import sessionmaker, scoped_session, Session
 from .models import Base
 from constants import DEFAULT_DATABASE_NAME
 
@@ -17,7 +19,7 @@ class Database:
         Args:
             database_url: SQLAlchemy database URL
         """
-        self.engine = create_engine(database_url)
+        self.engine: Engine = create_engine(database_url)
         self.session_factory = sessionmaker(bind=self.engine)
         self.Session = scoped_session(self.session_factory)
     
@@ -35,7 +37,7 @@ class Database:
         logger.info("Creating tables")
         Base.metadata.create_all(self.engine)
     
-    def get_session(self):
+    def get_session(self) -> Session:
         """
         Get a new database session
         
@@ -44,7 +46,7 @@ class Database:
         """
         return self.Session()
     
-    def close_session(self, session) -> None:
+    def close_session(self, session: Session) -> None:
         """
         Close a database session
         
@@ -63,16 +65,19 @@ class Database:
 
 
 # Singleton instance
-db = Database()
+db: Database = Database()
 
 
-def init_db(database_url: str = f"sqlite:///{DEFAULT_DATABASE_NAME}", drop_first: bool = False) -> None:
+def init_db(database_url: str = f"sqlite:///{DEFAULT_DATABASE_NAME}", drop_first: bool = False) -> Database:
     """
     Initialize the database
     
     Args:
         database_url: SQLAlchemy database URL
         drop_first: If True, drop all tables before creating
+        
+    Returns:
+        Database instance
     """
     global db
     db = Database(database_url)

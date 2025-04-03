@@ -1,18 +1,21 @@
 import os
 import logging
-from flask import Flask, request, jsonify, send_from_directory
+from typing import Optional, Dict, Any, Union, List, cast
+from flask import Flask, request, jsonify, send_from_directory, Response
+
 from flask_cors import CORS
 
 from db import init_db
 from routes import register_blueprints
 from constants import MODEL_CONFIGS, DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_API_PATH, DEFAULT_DATABASE_NAME
+from type_definitions import StorageType
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # Create Flask app
-app = Flask(__name__,
+app: Flask = Flask(__name__,
     static_folder='frontend/dist',
     static_url_path='',
     template_folder='frontend/dist'
@@ -30,7 +33,7 @@ CORS(app, resources={
 # Load configuration from environment variables
 app.config.update(
     # Storage configuration
-    STORAGE_TYPE=os.getenv('STORAGE_TYPE', 'local'),  # 'local' or 's3'
+    STORAGE_TYPE=cast(StorageType, os.getenv('STORAGE_TYPE', 'local')),  # 'local' or 's3'
     LOCAL_STORAGE_PATH=os.getenv('LOCAL_STORAGE_PATH', '.data'),
     
     # S3 configuration
@@ -58,12 +61,12 @@ register_blueprints(app)
 
 # Serve the React app
 @app.route('/')
-def index():
+def index() -> Response:
     return send_from_directory(app.static_folder, 'index.html')
 
 # Handle client-side routing
 @app.route('/<path:path>')
-def serve(path):
+def serve(path: str) -> Response:
     if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
         return send_from_directory(app.static_folder, path)
     else:
