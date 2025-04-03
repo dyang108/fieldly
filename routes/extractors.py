@@ -258,10 +258,42 @@ def merge_chunk_data(accumulated_data: Dict[str, Any], chunk_data: Dict[str, Any
     
     return merged
 
-def print_accumulated_data(data: Dict[str, Any], indent: int = 0) -> None:
-    """Print accumulated data as formatted JSON."""
+def print_accumulated_data(data: Dict[str, Any], schema: Dict[str, Any], indent: int = 0) -> None:
+    """
+    Print accumulated data as formatted JSON, filtering to only include fields defined in the schema.
+    
+    Args:
+        data: The accumulated data to print
+        schema: The schema defining the allowed fields
+        indent: Current indentation level (used for recursive calls)
+    """
+    def filter_by_schema(data: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, Any]:
+        """Recursively filter data to only include fields defined in the schema."""
+        if not isinstance(data, dict) or not isinstance(schema, dict):
+            return data
+            
+        filtered = {}
+        for key, value in data.items():
+            if key in schema:
+                if isinstance(value, dict) and isinstance(schema[key], dict):
+                    # Recursively filter nested dictionaries
+                    filtered[key] = filter_by_schema(value, schema[key])
+                elif isinstance(value, list) and isinstance(schema[key], dict) and "items" in schema[key]:
+                    # Handle arrays of objects
+                    filtered[key] = [
+                        filter_by_schema(item, schema[key]["items"])
+                        for item in value
+                    ]
+                else:
+                    # Keep basic fields as is
+                    filtered[key] = value
+        return filtered
+    
+    # Filter the data according to the schema
+    filtered_data = filter_by_schema(data, schema)
+    
     # Filter out None values for cleaner output
-    filtered_data = {k: v for k, v in data.items() if v is not None}
+    filtered_data = {k: v for k, v in filtered_data.items() if v is not None}
     
     # Print formatted JSON
     logger.info(json.dumps(filtered_data, indent=2))
@@ -318,6 +350,6 @@ def extract_data_from_markdown(md_path: str, schema: Dict[str, Any]) -> Dict[str
         
         # Log the accumulated data
         logger.info(f"Accumulated data after chunk {i}:")
-        print_accumulated_data(accumulated_data)
+        print_accumulated_data(accumulated_data, schema)
     
     return accumulated_data 

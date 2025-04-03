@@ -57,19 +57,58 @@ It is okay if the JSON object is empty. It is okay if the JSON object is not com
 
 Response:"""
     
-    def clean_json_response(self, response: str) -> Optional[Dict[str, Any]]:
+    def filter_data_by_schema(self, data: Dict[str, Any], schema: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Clean and extract JSON from a model response
+        Filter data to only include fields defined in the schema
+        
+        Args:
+            data: Extracted data to filter
+            schema: Schema defining allowed fields and structure
+            
+        Returns:
+            Filtered data containing only schema-defined fields
+        """
+        if not isinstance(data, dict) or not isinstance(schema, dict):
+            return data
+            
+        filtered_data = {}
+        
+        for key, value in data.items():
+            if key not in schema:
+                continue
+                
+            if isinstance(value, dict) and isinstance(schema[key], dict):
+                # Recursively filter nested dictionaries
+                filtered_data[key] = self.filter_data_by_schema(value, schema[key])
+            elif isinstance(value, list) and isinstance(schema[key], dict) and 'items' in schema[key]:
+                # Handle arrays of objects
+                if isinstance(schema[key]['items'], dict):
+                    filtered_data[key] = [
+                        self.filter_data_by_schema(item, schema[key]['items'])
+                        for item in value
+                    ]
+                else:
+                    filtered_data[key] = value
+            else:
+                # For primitive types, just copy the value
+                filtered_data[key] = value
+                
+        return filtered_data
+    
+    def clean_json_response(self, response: str, schema: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """
+        Clean and extract JSON from a model response, filtering to match schema
         
         Args:
             response: Raw response from the model
+            schema: Schema to filter the extracted data against
             
         Returns:
-            Parsed JSON data or None if parsing fails
+            Parsed and filtered JSON data or None if parsing fails
         """
         try:
             # First try direct JSON parsing
-            return json.loads(response)
+            data = json.loads(response)
         except json.JSONDecodeError:
             # If direct parsing fails, try to find JSON in the response
             try:
@@ -81,20 +120,22 @@ Response:"""
                     json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
                     json_str = re.sub(r',\s*]', ']', json_str)  # Remove trailing commas in arrays
                     json_str = re.sub(r'\s+', ' ', json_str)    # Normalize whitespace
-                    return json.loads(json_str)
-                
-                # If no code block found, try to find JSON directly
-                json_match = re.search(r'\{[\s\S]*\}', response)
-                if json_match:
-                    json_str = json_match.group(0)
-                    # Clean up common formatting issues
-                    json_str = re.sub(r',\s*}', '}', json_str)
-                    json_str = re.sub(r',\s*]', ']', json_str)
-                    json_str = re.sub(r'\s+', ' ', json_str)
-                    return json.loads(json_str)
-                
-                return None
-                
+                    data = json.loads(json_str)
+                else:
+                    # If no code block found, try to find JSON directly
+                    json_match = re.search(r'\{[\s\S]*\}', response)
+                    if json_match:
+                        json_str = json_match.group(0)
+                        # Clean up common formatting issues
+                        json_str = re.sub(r',\s*}', '}', json_str)
+                        json_str = re.sub(r',\s*]', ']', json_str)
+                        json_str = re.sub(r'\s+', ' ', json_str)
+                        data = json.loads(json_str)
+                    else:
+                        return None
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse JSON from response: {str(e)}")
-                return None 
+                return None
+        
+        # Filter the data to match the schema structure
+        return self.filter_data_by_schema(data, schema) 

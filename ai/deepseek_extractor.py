@@ -57,7 +57,7 @@ class DeepSeekExtractor(DataExtractor):
         
         # Parse the response
         if response_text:
-            extracted_data = self.clean_json_response(response_text)
+            extracted_data = self.clean_json_response(response_text, schema)
             if extracted_data:
                 return extracted_data
         
@@ -137,46 +137,4 @@ class DeepSeekExtractor(DataExtractor):
             return None
         except Exception as e:
             logger.error(f"Unexpected error in cloud API call: {str(e)}")
-            return None
-    
-    def clean_json_response(self, response: str) -> Optional[Dict[str, Any]]:
-        """
-        Clean and extract JSON from a model response
-        
-        Args:
-            response: Raw response from the model
-            
-        Returns:
-            Parsed JSON data or None if parsing fails
-        """
-        try:
-            # First try direct JSON parsing
-            return json.loads(response)
-        except json.JSONDecodeError:
-            # If direct parsing fails, try to find JSON in the response
-            try:
-                # Look for JSON-like content between triple backticks
-                json_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', response)
-                if json_match:
-                    json_str = json_match.group(1)
-                    # Clean up common formatting issues
-                    json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
-                    json_str = re.sub(r',\s*]', ']', json_str)  # Remove trailing commas in arrays
-                    json_str = re.sub(r'\s+', ' ', json_str)    # Normalize whitespace
-                    return json.loads(json_str)
-                
-                # If no code block found, try to find JSON directly
-                json_match = re.search(r'\{[\s\S]*\}', response)
-                if json_match:
-                    json_str = json_match.group(0)
-                    # Clean up common formatting issues
-                    json_str = re.sub(r',\s*}', '}', json_str)
-                    json_str = re.sub(r',\s*]', ']', json_str)
-                    json_str = re.sub(r'\s+', ' ', json_str)
-                    return json.loads(json_str)
-                
-                return None
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON from response: {str(e)}")
-                return None 
+            return None 
