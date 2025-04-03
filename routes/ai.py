@@ -1,8 +1,12 @@
 import logging
-from flask import Blueprint, request, jsonify, current_app
+import json
+from flask import Blueprint, request, jsonify
+from typing import Dict, Any, List, Optional, cast
 
+from db import db, Schema
 from ai import create_schema_generator
 from constants import DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_API_URL
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -18,32 +22,29 @@ def generate_schema():
         logger.debug(f"Received schema generation request with conversation: {conversation}")
         
         # Get AI configuration from app config
-        ai_type = None
-        ai_config = {}
-        
-        # Check if local model should be used
-        use_local_model = current_app.config.get('USE_LOCAL_MODEL', 'true').lower() == 'true'
+        use_local_model = os.getenv('USE_LOCAL_MODEL', 'true').lower() == 'true'
         
         if use_local_model:
-            ai_type = 'deepseek_local'
-            ai_config = {
-                'model': current_app.config.get('OLLAMA_MODEL', DEFAULT_LOCAL_MODEL),
-                'api_url': current_app.config.get('OLLAMA_API_URL', DEFAULT_OLLAMA_API_URL)
-            }
-            logger.info("Using local DeepSeek model through Ollama")
-        elif current_app.config.get('DEEPSEEK_API_KEY'):
-            ai_type = 'deepseek_api'
-            ai_config = {
-                'api_key': current_app.config.get('DEEPSEEK_API_KEY'),
-                'api_url': current_app.config.get('DEEPSEEK_API_URL', 'https://api.deepseek.com/v1/chat/completions')
-            }
-            logger.info("Using DeepSeek API")
+            # Use local model configuration
+            schema_generator = create_schema_generator(
+                use_local_model=True,
+                model=os.getenv('OLLAMA_MODEL', DEFAULT_LOCAL_MODEL),
+                api_url=os.getenv('OLLAMA_API_URL', DEFAULT_OLLAMA_API_URL)
+            )
+            logger.info("Using local model through Ollama")
+        elif os.getenv('DEEPSEEK_API_KEY'):
+            # Use API configuration
+            schema_generator = create_schema_generator(
+                use_local_model=False,
+                api_key=os.getenv('DEEPSEEK_API_KEY'),
+                model=os.getenv('DEEPSEEK_MODEL', 'deepseek-chat'),
+                api_url=os.getenv('DEEPSEEK_API_URL', 'https://api.deepseek.com/v1/chat/completions')
+            )
+            logger.info("Using API model")
         else:
-            ai_type = 'mock'
+            # Use mock generator
+            schema_generator = MockSchemaGenerator()
             logger.info("Using mock schema generator")
-        
-        # Create schema generator instance
-        schema_generator = create_schema_generator(ai_type, ai_config)
         
         # Generate schema
         result = schema_generator.generate_schema(conversation)
@@ -56,4 +57,84 @@ def generate_schema():
             'message': 'Error generating schema',
             'schema': {},
             'suggested_name': 'error_schema'
-        }), 500 
+        }), 500
+
+
+@ai_bp.route('/edit-schema', methods=['POST'])
+def edit_schema():
+    """Edit an existing JSON schema using a natural language conversation"""
+    try:
+        conversation = request.json.get('conversation', [])
+        schema_id = request.json.get('schema_id')
+        
+        if not schema_id:
+            return jsonify({'error': 'schema_id is required'}), 400
+            
+        session = db.get_session()
+        schema = session.query(Schema).get(schema_id)
+        if not schema:
+            return jsonify({'error': 'Schema not found'}), 404
+            
+        current_schema = schema.get_schema()
+        
+        # Get AI configuration from app config
+        use_local_model = os.getenv('USE_LOCAL_MODEL', 'true').lower() == 'true'
+        
+        if use_local_model:
+            # Use local model configuration
+            schema_generator = create_schema_generator(
+                use_local_model=True,
+                model=os.getenv('OLLAMA_MODEL', DEFAULT_LOCAL_MODEL),
+                api_url=os.getenv('OLLAMA_API_URL', DEFAULT_OLLAMA_API_URL)
+            )
+            logger.info("Using local model through Ollama")
+        elif os.getenv('DEEPSEEK_API_KEY'):
+            # Use API configuration
+            schema_generator = create_schema_generator(
+                use_local_model=False,
+                api_key=os.getenv('DEEPSEEK_API_KEY'),
+                model=os.getenv('DEEPSEEK_MODEL', 'deepseek-chat'),
+                api_url=os.getenv('DEEPSEEK_API_URL', 'https://api.deepseek.com/v1/chat/completions')
+            )
+            logger.info("Using API model")
+        else:
+            # Use mock generator
+            schema_generator = MockSchemaGenerator()
+            logger.info("Using mock schema generator")
+        
+        # Prepare conversation with context
+        full_conversation = []
+        
+        # Add system message with context if not present
+        has_system_msg = any(msg.get('role') == 'system' for msg in conversation)
+        if not has_system_msg:
+            full_conversation.append({
+                'role': 'system',
+                'content': f'You are editing a schema named "{schema.name}". The current schema is provided as context.'
+            })
+        
+        # Add context message with current schema
+        full_conversation.append({
+            'role': 'system',
+            'content': f'Current schema: {json.dumps(current_schema)}'
+        })
+        
+        # Add user conversation
+        full_conversation.extend(conversation)
+        
+        # Generate updated schema
+        result = schema_generator.update_schema(full_conversation, current_schema)
+        
+        return jsonify({
+            'message': result.get('message', 'Schema updated successfully'),
+            'updated_schema': result.get('schema', current_schema)
+        })
+    except Exception as e:
+        logger.error(f"Error editing schema: {str(e)}", exc_info=True)
+        return jsonify({
+            'error': str(e),
+            'message': 'Error editing schema',
+            'updated_schema': current_schema
+        }), 500
+    finally:
+        db.close_session(session) 

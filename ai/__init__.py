@@ -7,29 +7,57 @@ from .model_api import APIModelSchemaGenerator
 from .model_local import LocalOllamaSchemaGenerator
 from .mock import MockSchemaGenerator
 from .llm_extractor import LLMExtractor
-from constants import DEFAULT_LLM_PROVIDER, PROVIDER_CONFIGS
+from constants import DEFAULT_LLM_PROVIDER, PROVIDER_CONFIGS, DEFAULT_LOCAL_MODEL, DEFAULT_OLLAMA_API_URL
 
 logger = logging.getLogger(__name__)
 
-def create_schema_generator(use_api: bool = False, api_key: Optional[str] = None, **kwargs) -> SchemaGenerator:
+def create_schema_generator(
+    use_local_model: bool = True,
+    api_key: Optional[str] = None,
+    model: Optional[str] = None,
+    api_url: Optional[str] = None,
+    **kwargs
+) -> SchemaGenerator:
     """
     Factory function to create a schema generator based on configuration.
     
     Args:
-        use_api: Whether to use API version (vs. local)
-        api_key: API key for API access
+        use_local_model: Whether to use local model (True) or API model (False)
+        api_key: API key for API access (required if use_local_model is False)
+        model: Model name to use (defaults to DEFAULT_LOCAL_MODEL for local, required for API)
+        api_url: API URL to use (defaults to DEFAULT_OLLAMA_API_URL for local, required for API)
+        **kwargs: Additional arguments passed to the generator
         
     Returns:
         An instance of a SchemaGenerator implementation
+        
+    Raises:
+        ValueError: If required parameters are missing
     """
-    if use_api:
-        # Import here to avoid circular imports
-        from .model_api import APIModelSchemaGenerator
-        return APIModelSchemaGenerator(api_key=api_key, **kwargs)
-    else:
+    if use_local_model:
         # Import here to avoid circular imports
         from .model_local import LocalOllamaSchemaGenerator
-        return LocalOllamaSchemaGenerator(**kwargs)
+        return LocalOllamaSchemaGenerator(
+            model=model or DEFAULT_LOCAL_MODEL,
+            api_url=api_url or DEFAULT_OLLAMA_API_URL,
+            **kwargs
+        )
+    else:
+        if not api_key:
+            raise ValueError("api_key is required when using API model")
+        if not model:
+            raise ValueError("model is required when using API model")
+        if not api_url:
+            raise ValueError("api_url is required when using API model")
+            
+        # Import here to avoid circular imports
+        from .model_api import APIModelSchemaGenerator
+        return APIModelSchemaGenerator(
+            api_key=api_key,
+            api_url=api_url,
+            model_name=model,
+            **kwargs
+        )
 
 def create_llm_extractor(use_api: bool = False, api_key: Optional[str] = None, 
                          provider: Optional[str] = None, **kwargs) -> LLMExtractor:

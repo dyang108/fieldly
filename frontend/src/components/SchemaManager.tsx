@@ -66,6 +66,10 @@ export default function SchemaManager() {
   // Edit state
   const [editingSchema, setEditingSchema] = useState<Schema | null>(null)
   const [editedSchema, setEditedSchema] = useState<object | null>(null)
+  const [editMode, setEditMode] = useState<'manual' | 'conversational'>('manual')
+  const [editConversation, setEditConversation] = useState<Message[]>([])
+  const [editPrompt, setEditPrompt] = useState('')
+  const [processingEdit, setProcessingEdit] = useState(false)
 
   useEffect(() => {
     fetchSchemas()
@@ -175,6 +179,12 @@ export default function SchemaManager() {
   const handleStartEditing = (schema: Schema) => {
     setEditingSchema(schema)
     setEditedSchema(schema.schema)
+    setEditMode('manual')
+    // Initialize edit conversation with system message
+    setEditConversation([{
+      role: 'system',
+      content: `I'm editing a schema named "${schema.name}". The current schema is provided as context.`
+    }])
   }
 
   const handleUpdateSchema = async () => {
@@ -188,6 +198,8 @@ export default function SchemaManager() {
       // Reset editing state
       setEditingSchema(null)
       setEditedSchema(null)
+      setEditConversation([])
+      setEditPrompt('')
       
       // Show success notification
       setNotification('Schema updated successfully')
@@ -198,6 +210,49 @@ export default function SchemaManager() {
     } catch (err) {
       console.error('Error updating schema:', err)
       setError('Failed to update schema')
+    }
+  }
+
+  const handleSendEditPrompt = async () => {
+    if (!editPrompt.trim() || !editingSchema) return
+    
+    // Add user message to conversation
+    const userMessage: Message = { role: 'user', content: editPrompt }
+    const updatedConversation = [...editConversation, userMessage]
+    setEditConversation(updatedConversation)
+    
+    // Clear prompt field
+    setEditPrompt('')
+    
+    // Process edit using the conversation
+    setProcessingEdit(true)
+    try {
+      const response = await api.post('/api/edit-schema', {
+        schema_id: editingSchema.id,
+        current_schema: editedSchema,
+        conversation: updatedConversation
+      })
+      
+      // Add assistant response to conversation
+      const assistantMessage: Message = { 
+        role: 'assistant', 
+        content: response.data.message || 'I updated the schema according to your instructions.'
+      }
+      setEditConversation([...updatedConversation, assistantMessage])
+      
+      // Update edited schema with the new version
+      setEditedSchema(response.data.updated_schema)
+    } catch (err) {
+      console.error('Error updating schema:', err)
+      setError('Failed to update schema conversationally')
+      // Add error message to conversation
+      const errorMessage: Message = {
+        role: 'assistant',
+        content: 'Sorry, I encountered an error updating the schema.'
+      }
+      setEditConversation([...updatedConversation, errorMessage])
+    } finally {
+      setProcessingEdit(false)
     }
   }
 
@@ -473,16 +528,109 @@ export default function SchemaManager() {
           <Typography variant="h6" gutterBottom>
             Edit Schema
           </Typography>
-          <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
-            <ReactJson 
-              src={editedSchema || {}} 
-              theme="rjv-default" 
-              displayDataTypes={false}
-              onEdit={(edit: any) => setEditedSchema(edit.updated_src)}
-              onAdd={(add: any) => setEditedSchema(add.updated_src)}
-              onDelete={(del: any) => setEditedSchema(del.updated_src)}
-            />
+          
+          {/* Editing Mode Tabs */}
+          <Box sx={{ display: 'flex', mb: 2 }}>
+            <Button 
+              variant={editMode === 'manual' ? 'contained' : 'outlined'}
+              size="small"
+              onClick={() => setEditMode('manual')}
+              sx={{ mr: 1 }}
+            >
+              Manual Edit
+            </Button>
+            <Button 
+              variant={editMode === 'conversational' ? 'contained' : 'outlined'}
+              size="small"
+              onClick={() => setEditMode('conversational')}
+            >
+              Conversational Edit
+            </Button>
           </Box>
+          
+          {editMode === 'manual' ? (
+            // Manual Editing Interface
+            <Box sx={{ maxHeight: 200, overflowY: 'auto' }}>
+              <ReactJson 
+                src={editedSchema || {}} 
+                theme="rjv-default" 
+                displayDataTypes={false}
+                onEdit={(edit: any) => setEditedSchema(edit.updated_src)}
+                onAdd={(add: any) => setEditedSchema(add.updated_src)}
+                onDelete={(del: any) => setEditedSchema(del.updated_src)}
+              />
+            </Box>
+          ) : (
+            // Conversational Editing Interface
+            <Box sx={{ mb: 2 }}>
+              {/* Conversation Display */}
+              <Box sx={{ mb: 2, maxHeight: 200, overflowY: 'auto', p: 1, border: '1px solid #eee', borderRadius: 1 }}>
+                {editConversation.filter(msg => msg.role !== 'system').map((message, index) => (
+                  <Box 
+                    key={index} 
+                    sx={{
+                      display: 'flex',
+                      justifyContent: message.role === 'user' ? 'flex-end' : 'flex-start',
+                      mb: 1
+                    }}
+                  >
+                    <Card 
+                      sx={{ 
+                        maxWidth: '80%',
+                        bgcolor: message.role === 'user' ? 'primary.light' : 'grey.100'
+                      }}
+                    >
+                      <CardContent sx={{ py: 1, px: 1.5, '&:last-child': { pb: 1 } }}>
+                        <Typography variant="body2" color={message.role === 'user' ? 'white' : 'text.primary'}>
+                          {message.content}
+                        </Typography>
+                      </CardContent>
+                    </Card>
+                  </Box>
+                ))}
+              </Box>
+              
+              {/* Schema Preview */}
+              <Typography variant="subtitle2" gutterBottom>Current Schema:</Typography>
+              <Box sx={{ maxHeight: 150, overflowY: 'auto', border: '1px solid #eee', borderRadius: 1, mb: 2 }}>
+                <ReactJson 
+                  src={editedSchema || {}} 
+                  theme="rjv-default" 
+                  displayDataTypes={false}
+                  collapsed={1}
+                  style={{ padding: '8px' }}
+                />
+              </Box>
+              
+              {/* Input area */}
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <TextField
+                  size="small"
+                  fullWidth
+                  placeholder="Describe your changes..."
+                  value={editPrompt}
+                  onChange={(e) => setEditPrompt(e.target.value)}
+                  onKeyPress={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      handleSendEditPrompt()
+                      e.preventDefault()
+                    }
+                  }}
+                />
+                <Button
+                  variant="contained"
+                  color="primary"
+                  size="small"
+                  onClick={handleSendEditPrompt}
+                  disabled={processingEdit || !editPrompt.trim()}
+                  sx={{ minWidth: '80px' }}
+                >
+                  {processingEdit ? <CircularProgress size={24} /> : 'Send'}
+                </Button>
+              </Box>
+            </Box>
+          )}
+          
           <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
             <Button 
               variant="contained" 
@@ -495,7 +643,10 @@ export default function SchemaManager() {
             <Button 
               variant="outlined"
               size="small"
-              onClick={() => setEditingSchema(null)}
+              onClick={() => {
+                setEditingSchema(null);
+                setEditConversation([]);
+              }}
             >
               Cancel
             </Button>
