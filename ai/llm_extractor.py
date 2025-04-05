@@ -359,4 +359,86 @@ class LLMExtractor(DataExtractor):
                 return merged_data
         
         logger.error("Failed to extract valid JSON from model merge response")
-        return {} 
+        return {}
+
+    def merge_results_with_reasoning(self, prompt: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Merge multiple extraction results using the LLM and provide reasoning for decisions
+        
+        Args:
+            prompt: Prompt for the LLM to merge the results with reasoning
+            schema: Schema defining the structure of the data
+            
+        Returns:
+            Dictionary containing:
+                - merged_data: Merged data matching the schema
+                - reasoning: Explanations for merge decisions
+        """
+        # Send the prompt to the appropriate model
+        if self.use_api:
+            response_text = self._call_cloud_api(prompt)
+        else:
+            response_text = self._call_local_api(prompt)
+        
+        logger.debug(f"Merge with reasoning response text: {response_text}")
+        
+        # Parse the response
+        if response_text:
+            try:
+                # First try to parse the full response
+                json_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', response_text)
+                if json_match:
+                    # Extract the JSON content between the backticks
+                    json_str = json_match.group(1)
+                    # Clean up common formatting issues
+                    json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
+                    json_str = re.sub(r',\s*]', ']', json_str)  # Remove trailing commas in arrays
+                    json_str = re.sub(r'\s+', ' ', json_str)    # Normalize whitespace
+                    data = json.loads(json_str)
+                else:
+                    # If not wrapped in backticks, try to parse directly
+                    data = json.loads(response_text)
+                
+                # Check if the response has the expected structure with merged_data and reasoning
+                if isinstance(data, dict) and 'merged_data' in data and 'reasoning' in data:
+                    # Filter the merged data to match the schema
+                    filtered_data = self.filter_data_by_schema(data['merged_data'], schema)
+                    
+                    # Return the filtered data and reasoning
+                    return {
+                        'merged_data': filtered_data,
+                        'reasoning': data['reasoning']
+                    }
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse JSON response with reasoning: {str(e)}")
+                
+                # Try to extract JSON using regex
+                json_data = extract_json_from_text(response_text)
+                if json_data and isinstance(json_data, dict) and 'merged_data' in json_data and 'reasoning' in json_data:
+                    # Filter the merged data to match the schema
+                    filtered_data = self.filter_data_by_schema(json_data['merged_data'], schema)
+                    
+                    # Return the filtered data and reasoning
+                    return {
+                        'merged_data': filtered_data,
+                        'reasoning': json_data['reasoning']
+                    }
+            
+            # If we couldn't parse the response with reasoning, fall back to standard merge
+            logger.warning("Failed to parse response with reasoning, falling back to standard merge")
+            merged_data = self.clean_json_response(response_text, schema)
+            if merged_data:
+                return {
+                    'merged_data': merged_data,
+                    'reasoning': {
+                        'fallback': 'Could not extract reasoning from model response, using standard merge.'
+                    }
+                }
+        
+        logger.error("Failed to extract valid JSON from model merge with reasoning response")
+        return {
+            'merged_data': {},
+            'reasoning': {
+                'error': 'Failed to process the model response for merge with reasoning.'
+            }
+        } 

@@ -515,15 +515,6 @@ export default function SchemaManager() {
                           size="small" 
                           sx={{ mr: 1 }}
                         />
-                        <Button 
-                          size="small" 
-                          variant="outlined" 
-                          color="primary"
-                          disabled={extracting}
-                          onClick={() => handleExtractData(mapping.dataset_name, mapping.source)}
-                        >
-                          {extracting ? 'Extracting...' : 'Extract Data'}
-                        </Button>
                       </Box>
                     ))
                 )}

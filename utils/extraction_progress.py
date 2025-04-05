@@ -336,6 +336,79 @@ def update_merged_data(source: str, dataset_name: str, merged_data: Dict[str, An
     else:
         logger.warning("SocketIO not initialized, can't emit merged_data event")
 
+def update_merged_data_with_reasoning(source: str, dataset_name: str, merged_data: Dict[str, Any], reasoning_entry: Dict[str, Any]):
+    """
+    Update the merged data from the extraction process with merge reasoning information
+    
+    Args:
+        source: The source of the dataset
+        dataset_name: The name of the dataset
+        merged_data: The current merged data
+        reasoning_entry: Information about the reasoning behind merge decisions
+    """
+    room = f"{source}_{dataset_name}"
+    
+    # Convert to string to check size
+    merged_data_str = json.dumps(merged_data)
+    data_size = len(merged_data_str)
+    logger.info(f"Merged data size for {room}: {data_size} bytes")
+    
+    # If data is too large (over 1MB), we might need to truncate it
+    max_size = 1024 * 1024  # 1MB
+    if data_size > max_size:
+        logger.warning(f"Merged data for {room} is very large ({data_size} bytes). This might cause issues with socket.io transmission.")
+    
+    with extraction_state_lock:
+        if room not in extraction_state:
+            # Try to load from disk if not in memory
+            state = _load_state_from_disk(source, dataset_name)
+            if state:
+                extraction_state[room] = state
+            else:
+                logger.warning(f"No extraction state found for {room}")
+                return
+        
+        state = extraction_state[room]
+        state['merged_data'] = merged_data
+        
+        # Initialize or update merge_reasoning_history
+        if 'merge_reasoning_history' not in state:
+            state['merge_reasoning_history'] = []
+        
+        # Add the new reasoning entry to the history
+        state['merge_reasoning_history'].append(reasoning_entry)
+    
+    # Save state to disk for persistence
+    _save_state_to_disk(source, dataset_name)
+    
+    if socketio:
+        try:
+            # Send a simplified version with just the keys and size
+            simplified_data = {
+                'dataSize': data_size,
+                'keys': list(merged_data.keys()),
+                'status': 'updated'
+            }
+            socketio.emit('merged_data_simplified', simplified_data, room=room)
+            logger.info(f"Sent simplified merged data notification for {room}")
+            
+            # Send the full merged data
+            socketio.emit('merged_data', {'merged_data': merged_data}, room=room)
+            
+            # Send the merge reasoning information separately
+            socketio.emit('merge_reasoning', reasoning_entry, room=room)
+            logger.info(f"Sent merge reasoning for {room}")
+            
+            # Also send the complete history for clients that might have missed updates
+            socketio.emit('merge_reasoning_history', {
+                'history': state.get('merge_reasoning_history', [])
+            }, room=room)
+            
+        except Exception as e:
+            logger.error(f"Error sending merged data with reasoning: {str(e)}")
+    else:
+        logger.warning("SocketIO not initialized, can't emit merge_reasoning event")
+
 def file_completed(source: str, dataset_name: str, file_name: str):
     """
     Mark a file as completed and update the processed count

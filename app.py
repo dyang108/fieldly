@@ -76,6 +76,7 @@ app.config.update(
     # Storage configuration
     STORAGE_TYPE=cast(StorageType, os.getenv('STORAGE_TYPE', 'local')),  # 'local' or 's3'
     LOCAL_STORAGE_PATH=os.getenv('LOCAL_STORAGE_PATH', '.data'),
+    DATA_DIR=os.getenv('DATA_DIR', os.path.join(os.path.dirname(os.path.abspath(__file__)), '.data')),
     
     # S3 configuration
     S3_BUCKET_NAME=os.getenv('S3_BUCKET_NAME', ''),
@@ -251,18 +252,28 @@ def handle_leave_room(data):
         logger.error(f"Error in handle_leave_room: {str(e)}", exc_info=True)
         emit('error', {'message': f'Error leaving room: {str(e)}'})
 
-# Serve the React app
+# Serve the React app root
 @app.route('/')
 def index() -> Response:
     return send_from_directory(app.static_folder, 'index.html')
 
-# Handle client-side routing
+# Handle client-side routing - this is crucial for SPAs with client-side routing
 @app.route('/<path:path>')
 def serve(path: str) -> Response:
-    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+    # Only attempt to serve actual files for api endpoints
+    if path.startswith('api/'):
+        # API routes are handled by blueprints, so 404 if hit here
+        return jsonify({'error': 'API endpoint not found'}), 404
+        
+    # Check if this is a static asset request
+    static_file_path = os.path.join(app.static_folder, path)
+    if path != "" and os.path.exists(static_file_path) and not os.path.isdir(static_file_path):
+        # Only serve actual files, not directories
         return send_from_directory(app.static_folder, path)
-    else:
-        return send_from_directory(app.static_folder, 'index.html')
+    
+    # Otherwise, serve index.html for all non-API routes to enable client-side routing
+    # This handles routes like /dataset/*, /extraction-progress/*, etc.
+    return send_from_directory(app.static_folder, 'index.html')
 
 # New API endpoint to check if an extraction room is active
 @app.route('/api/extraction-room-status/<source>/<dataset_name>', methods=['GET'])
@@ -514,6 +525,56 @@ def get_extraction_results(source, dataset_name):
             'source': source,
             'dataset_name': dataset_name,
             'results': []
+        }), 500
+
+# API endpoint to check for active extraction progress
+@app.route('/api/extraction-progress/check/<source>/<path:dataset_name>', methods=['GET'])
+def check_extraction_progress(source: str, dataset_name: str):
+    """Check if there's an active extraction progress for a dataset
+
+    Args:
+        source: The source of the dataset
+        dataset_name: The name of the dataset
+
+    Returns:
+        JSON response with active status and additional info
+    """
+    try:
+        # Get extraction state from extraction_progress module
+        state = extraction_progress.get_extraction_state(source, dataset_name)
+        
+        # Check if there's an extraction record in the database
+        from db import db, ExtractionProgress
+        with db.get_session() as session:
+            extraction_record = session.query(ExtractionProgress).filter_by(
+                source=source,
+                dataset_name=dataset_name,
+                status='in_progress'
+            ).order_by(ExtractionProgress.id.desc()).first()
+            
+            has_extraction_record = extraction_record is not None
+        
+        # Determine if there's an active extraction
+        is_active = state is not None or has_extraction_record
+        
+        response = {
+            'active': is_active,
+            'source': source,
+            'dataset_name': dataset_name,
+            'state': state if state else None,
+            'has_db_record': has_extraction_record
+        }
+        
+        logger.info(f"Checked extraction progress for {source}/{dataset_name}: active={is_active}")
+        return jsonify(response)
+        
+    except Exception as e:
+        logger.error(f"Error checking extraction progress: {str(e)}", exc_info=True)
+        return jsonify({
+            'active': False,
+            'error': str(e),
+            'source': source,
+            'dataset_name': dataset_name
         }), 500
 
 if __name__ == '__main__':

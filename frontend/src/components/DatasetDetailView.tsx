@@ -15,7 +15,6 @@ import {
   InputLabel,
   Select,
   MenuItem,
-  Grid,
   Card,
   CardContent,
   Snackbar,
@@ -46,14 +45,11 @@ import {
   ExpandLess as ExpandLessIcon,
   Visibility as VisibilityIcon,
   Code as CodeIcon,
-  PictureAsPdf as PdfIcon
+  PictureAsPdf as PdfIcon,
+  Timeline as TimelineIcon
 } from '@mui/icons-material';
 import axios from 'axios';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import ExtractionProgress from './ExtractionProgress';
-import { 
-  isRoomActive
-} from '../utils/socket';
+import { useParams, useNavigate, Link as RouterLink } from 'react-router-dom';
 
 interface Schema {
   id: number;
@@ -101,11 +97,11 @@ export default function DatasetDetailView() {
   const [notification, setNotification] = useState('');
   const [extracting, setExtracting] = useState(false);
   const [extractionResult, setExtractionResult] = useState<ExtractionResult | null>(null);
-  const [showProgress, setShowProgress] = useState<boolean>(false);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [selectedPdf, setSelectedPdf] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<Record<string, any>>({});
   const [resultsFetchTimer, setResultsFetchTimer] = useState<number | null>(null);
+  const [hasActiveExtraction, setHasActiveExtraction] = useState<boolean>(false);
 
   // Reference to track extraction status to avoid unnecessary fetches
   const extractionStatusRef = useRef({
@@ -126,10 +122,9 @@ export default function DatasetDetailView() {
     // First fetch general data and extraction results in parallel
     Promise.all([
       fetchData(),
-      fetchExtractionResults()
+      fetchExtractionResults(),
+      checkForActiveExtraction()
     ]).then(() => {
-      // After we have data, check if there's an active extraction
-      checkForActiveExtraction();
       setLoading(false);
     }).catch(err => {
       console.error('Error loading dataset details:', err);
@@ -144,29 +139,25 @@ export default function DatasetDetailView() {
     };
   }, [source, datasetName]);
 
-  // Replace the socket event listener with a refresh listener
+  // Set up a polling mechanism to check for extraction updates
   useEffect(() => {
     if (!source || !datasetName || !extracting) return;
 
-    // Set up an extraction progress listener to trigger result refreshes
-    const handleExtractionProgress = () => {
+    // Set up an interval to check for updates
+    const pollingInterval = setInterval(() => {
       // Throttle refreshes to avoid too many API calls
       const now = Date.now();
       if (now - extractionStatusRef.current.lastFetchTime > 5000) { // Refresh at most every 5 seconds
-        console.log('Extraction progress detected, refreshing results...');
+        console.log('Polling for extraction results...');
         fetchExtractionResults();
+        checkForActiveExtraction();
         extractionStatusRef.current.lastFetchTime = now;
       }
-    };
-
-    // Listen for file completions and general progress updates
-    document.addEventListener('file_completed', handleExtractionProgress);
-    document.addEventListener('extraction_progress', handleExtractionProgress);
+    }, 10000); // Poll every 10 seconds
 
     // Cleanup
     return () => {
-      document.removeEventListener('file_completed', handleExtractionProgress);
-      document.removeEventListener('extraction_progress', handleExtractionProgress);
+      clearInterval(pollingInterval);
     };
   }, [source, datasetName, extracting]);
 
@@ -176,12 +167,14 @@ export default function DatasetDetailView() {
     
     try {
       const response = await api.get(
-        `/api/extraction/status?source=${encodeURIComponent(source)}&dataset_name=${encodeURIComponent(datasetName)}`
+        `/api/extraction-progress/check/${encodeURIComponent(source)}/${encodeURIComponent(datasetName)}`
       );
       
-      if (response.data && response.data.is_active) {
+      if (response.data && response.data.active) {
         console.log('Active extraction session detected');
-        setShowProgress(true);
+        setHasActiveExtraction(true);
+      } else {
+        setHasActiveExtraction(false);
       }
     } catch (err) {
       console.error('Error checking extraction status:', err);
@@ -299,7 +292,6 @@ export default function DatasetDetailView() {
 
     setExtracting(true);
     setExtractionResult(null);
-    setShowProgress(true);
     setError('');
     setExpandedRows({});
     
@@ -328,35 +320,16 @@ export default function DatasetDetailView() {
         }
       );
       
-      setNotification(`Data extraction completed for ${datasetName}`);
+      setNotification(`Data extraction started for ${datasetName}`);
       
-      // Fetch the results after extraction completes
-      fetchExtractionResults();
+      // Navigate to the extraction progress page
+      navigate(`/extraction-progress/${source}/${datasetName}`);
       
-      // Mark as completed
-      extractionStatusRef.current.isCompleted = true;
     } catch (err) {
       console.error('Error extracting data:', err);
       setError('Failed to extract data from dataset');
-    } finally {
       setExtracting(false);
     }
-  };
-
-  const handleExtractionComplete = () => {
-    console.log('Extraction completed, hiding progress component');
-    setShowProgress(false);
-    
-    // Show notification to the user
-    setNotification(`Extraction completed for ${datasetName}`);
-    setTimeout(() => setNotification(''), 3000);
-    
-    // Fetch the final results when extraction completes
-    console.log('Fetching final extraction results');
-    fetchExtractionResults();
-    
-    // Mark as completed
-    extractionStatusRef.current.isCompleted = true;
   };
 
   const toggleExpandRow = (filename: string) => {
@@ -417,290 +390,322 @@ export default function DatasetDetailView() {
 
   return (
     <Box sx={{ p: 3 }}>
-      {/* Breadcrumb navigation */}
-      <Breadcrumbs sx={{ mb: 3 }}>
-        <Link to="/" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center' }}>
-          <IconButton size="small">
-            <ArrowBackIcon fontSize="small" />
-          </IconButton>
-          <Typography color="text.primary">Datasets</Typography>
-        </Link>
-        <Typography color="text.primary">{datasetName}</Typography>
-      </Breadcrumbs>
-      
-      {/* Header with dataset info */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Box>
-          <Typography variant="h4" component="h1" gutterBottom>
-            {datasetName}
-          </Typography>
-          <Chip 
-            label={source?.toUpperCase()} 
-            color={source === 'local' ? 'info' : 'warning'} 
-            size="small" 
-          />
-        </Box>
+      {/* Header with back button, title, and extract button */}
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 3, flexWrap: 'wrap', gap: 2 }}>
+        <Button
+          variant="outlined"
+          startIcon={<ArrowBackIcon />}
+          onClick={() => navigate('/')}
+          sx={{ mr: 2 }}
+        >
+          Back to Datasets
+        </Button>
         
-        <Box>
+        <Breadcrumbs aria-label="breadcrumb" sx={{ flexGrow: 1 }}>
+          <Typography color="text.primary">
+            {source && source.charAt(0).toUpperCase() + source.slice(1)}
+          </Typography>
+          <Typography color="text.primary">{datasetName}</Typography>
+        </Breadcrumbs>
+        
+        <Box sx={{ display: 'flex', gap: 2 }}>
+          {/* Add extraction progress button when active */}
+          {hasActiveExtraction && (
+            <Button
+              component={RouterLink}
+              to={`/extraction-progress/${source}/${datasetName}`}
+              variant="outlined"
+              color="primary"
+              startIcon={<TimelineIcon />}
+            >
+              View Extraction Progress
+            </Button>
+          )}
+          
+          <Button 
+            variant="contained" 
+            disabled={extracting || !selectedSchemaId}
+            onClick={handleExtractData}
+            startIcon={extracting ? <CircularProgress size={20} /> : undefined}
+          >
+            Extract Data
+          </Button>
+          
           <Button
-            startIcon={<RefreshIcon />}
             variant="outlined"
-            onClick={fetchData}
+            startIcon={<RefreshIcon />}
+            onClick={() => {
+              setLoading(true);
+              Promise.all([fetchData(), fetchExtractionResults(), checkForActiveExtraction()])
+                .then(() => setLoading(false))
+                .catch(err => {
+                  console.error('Error refreshing data:', err);
+                  setLoading(false);
+                });
+            }}
           >
             Refresh
           </Button>
         </Box>
       </Box>
       
+      {/* Show error message if any */}
       {error && (
-        <Alert severity="error" sx={{ mb: 2 }}>
+        <Alert severity="error" sx={{ mb: 3 }}>
           {error}
         </Alert>
       )}
       
+      {/* Show notification */}
       <Snackbar
         open={!!notification}
-        message={notification}
-        anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
+        autoHideDuration={6000}
         onClose={() => setNotification('')}
+        message={notification}
       />
       
-      {/* Show progress component conditionally */}
-      {showProgress && source && datasetName ? (
-        <ExtractionProgress 
-          source={source} 
-          datasetName={datasetName} 
-          initialMode={extracting ? 'active' : 'check'} 
-          onComplete={handleExtractionComplete}
-        />
-      ) : null}
-      
+      {/* Loading indicator */}
+      {loading && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', p: 4 }}>
+          <CircularProgress />
+        </Box>
+      )}
+
       {/* Main content area */}
-      <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3 }}>
-        {/* Left side content */}
-        <Box sx={{ flex: { xs: '1 1 100%', md: '7 1 0%' }, display: 'flex', flexDirection: 'column', gap: 3 }}>
-          {/* File list */}
-          <Paper elevation={2} sx={{ p: 2 }}>
-            <Typography variant="h6" gutterBottom>
-              Files ({files.length})
-            </Typography>
-            
-            {files.length === 0 ? (
-              <Typography color="text.secondary" align="center" sx={{ py: 2 }}>
-                No files found in this dataset
+      <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
+        {/* Left side - Files list */}
+        <Box sx={{ flex: '1 1 48%', minWidth: '300px' }}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" component="h2" gutterBottom>
+                Dataset Files {files.length > 0 && `(${files.length})`}
               </Typography>
-            ) : (
-              <List sx={{ maxHeight: 300, overflow: 'auto' }}>
-                {files.map((file, index) => (
-                  <React.Fragment key={file.path}>
-                    <ListItem
-                      secondaryAction={
-                        <IconButton 
-                          edge="end" 
-                          onClick={() => handlePreviewPdf(file.name)}
-                          disabled={!file.name.toLowerCase().endsWith('.pdf')}
-                        >
-                          <PdfIcon />
-                        </IconButton>
-                      }
-                    >
-                      <FileIcon sx={{ mr: 1, color: 'text.secondary' }} />
-                      <ListItemText 
-                        primary={file.name} 
-                        secondary={file.size ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : null}
-                      />
-                    </ListItem>
-                    {index < files.length - 1 && <Divider />}
-                  </React.Fragment>
-                ))}
-              </List>
-            )}
-          </Paper>
-          
-          {/* Extraction Results table */}
-          <Paper elevation={2} sx={{ p: 2 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h6">
-                Extraction Results
-                {extractionResult && (
-                  <Typography variant="body2" component="span" sx={{ ml: 2 }}>
-                    ({extractionResult.processed_files} files processed)
+              
+              {/* Show file list */}
+              {files.length > 0 ? (
+                <List sx={{ maxHeight: '300px', overflow: 'auto' }}>
+                  {files.map((file, index) => (
+                    <React.Fragment key={file.path}>
+                      {index > 0 && <Divider />}
+                      <ListItem
+                        secondaryAction={
+                          <IconButton 
+                            edge="end" 
+                            aria-label="view" 
+                            onClick={() => handlePreviewPdf(file.name)}
+                            disabled={!file.name.toLowerCase().endsWith('.pdf')}
+                          >
+                            <PdfIcon />
+                          </IconButton>
+                        }
+                      >
+                        <ListItemText 
+                          primary={file.name} 
+                          secondary={file.size ? `${(file.size / 1024).toFixed(2)} KB` : ''} 
+                        />
+                      </ListItem>
+                    </React.Fragment>
+                  ))}
+                </List>
+              ) : (
+                <Box sx={{ py: 2, textAlign: 'center' }}>
+                  <Typography color="text.secondary">
+                    No files found in this dataset
                   </Typography>
-                )}
+                </Box>
+              )}
+            </CardContent>
+          </Card>
+        </Box>
+
+        {/* Right side - Schema selection */}
+        <Box sx={{ flex: '1 1 48%', minWidth: '300px' }}>
+          <Card>
+            <CardContent>
+              <Typography variant="h6" component="h2" gutterBottom>
+                Schema Selection
               </Typography>
-              <Button
-                startIcon={<RefreshIcon />}
-                size="small"
-                onClick={fetchExtractionResults}
-                variant="outlined"
-              >
-                Refresh Results
-              </Button>
-            </Box>
-            
-            {loading ? (
-              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 4 }}>
-                <CircularProgress size={40} sx={{ mb: 2 }} />
-                <Typography variant="body1">Loading extraction results...</Typography>
-              </Box>
-            ) : resultsToShow.length === 0 ? (
-              <Box sx={{ textAlign: 'center', py: 4, backgroundColor: 'background.paper' }}>
-                <Typography variant="body1" color="text.secondary">
-                  No extraction results found for this dataset.
-                </Typography>
-                <Button 
-                  variant="text" 
-                  startIcon={<RefreshIcon />} 
-                  onClick={fetchExtractionResults}
-                  sx={{ mt: 2 }}
+              
+              <FormControl fullWidth sx={{ mt: 2 }}>
+                <InputLabel id="schema-select-label">Select Schema</InputLabel>
+                <Select
+                  labelId="schema-select-label"
+                  value={selectedSchemaId || ''}
+                  label="Select Schema"
+                  onChange={(e) => setSelectedSchemaId(e.target.value ? Number(e.target.value) : null)}
                 >
-                  Refresh
+                  <MenuItem value="">
+                    <em>None</em>
+                  </MenuItem>
+                  {schemas.map((schema) => (
+                    <MenuItem key={schema.id} value={schema.id}>
+                      {schema.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+              
+              {/* Schema view button */}
+              <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-between' }}>
+                <Button
+                  component={RouterLink}
+                  to="/schemas"
+                  variant="outlined"
+                  startIcon={<CodeIcon />}
+                >
+                  Manage Schemas
                 </Button>
               </Box>
-            ) : (
-              <TableContainer sx={{ maxHeight: 400, overflow: 'auto' }}>
-                <Table stickyHeader size="small">
-                  <TableHead>
-                    <TableRow>
-                      <TableCell width="5%"></TableCell>
-                      <TableCell width="10%">Status</TableCell>
-                      <TableCell width="30%">Filename</TableCell>
-                      <TableCell width="45%">Details</TableCell>
-                      <TableCell width="10%">Actions</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {resultsToShow.map((result, index) => (
-                      <React.Fragment key={index}>
-                        <TableRow 
-                          sx={{ 
-                            '&:nth-of-type(odd)': { backgroundColor: 'action.hover' },
-                            backgroundColor: result.status === 'success' ? 'rgba(76, 175, 80, 0.08)' : 'rgba(239, 83, 80, 0.08)'
-                          }}
-                        >
-                          <TableCell>
-                            <IconButton 
-                              size="small" 
-                              onClick={() => toggleExpandRow(result.filename)}
-                              disabled={result.status !== 'success'}
+            </CardContent>
+          </Card>
+        </Box>
+      </Box>
+
+      {/* Extraction Results - below the two cards */}
+      <Box sx={{ mt: 3 }}>
+        <Paper elevation={2} sx={{ p: 2 }}>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+            <Typography variant="h6">Extraction Results</Typography>
+            {extractionResult && (
+              <Typography variant="body2" component="span" sx={{ ml: 2 }}>
+                ({extractionResult.processed_files} files processed)
+              </Typography>
+            )}
+            <Button
+              startIcon={<RefreshIcon />}
+              size="small"
+              onClick={fetchExtractionResults}
+              variant="outlined"
+            >
+              Refresh Results
+            </Button>
+          </Box>
+          
+          {/* Results content */}
+          {loading ? (
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 4 }}>
+              <CircularProgress size={40} sx={{ mb: 2 }} />
+              <Typography variant="body1">Loading extraction results...</Typography>
+            </Box>
+          ) : resultsToShow.length === 0 ? (
+            <Box sx={{ textAlign: 'center', py: 4, backgroundColor: 'background.paper' }}>
+              <Typography variant="body1" color="text.secondary">
+                No extraction results found for this dataset.
+              </Typography>
+              <Button 
+                variant="text" 
+                startIcon={<RefreshIcon />} 
+                onClick={fetchExtractionResults}
+                sx={{ mt: 2 }}
+              >
+                Refresh
+              </Button>
+            </Box>
+          ) : (
+            <TableContainer sx={{ maxHeight: 400, overflow: 'auto' }}>
+              <Table stickyHeader size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell width="5%"></TableCell>
+                    <TableCell width="10%">Status</TableCell>
+                    <TableCell width="30%">Filename</TableCell>
+                    <TableCell width="45%">Details</TableCell>
+                    <TableCell width="10%">Actions</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {resultsToShow.map((result, index) => (
+                    <React.Fragment key={index}>
+                      <TableRow
+                        sx={{
+                          '&:nth-of-type(odd)': { backgroundColor: 'action.hover' },
+                          backgroundColor: result.status === 'error' ? 'rgba(255, 0, 0, 0.05)' : undefined
+                        }}
+                      >
+                        <TableCell>
+                          <IconButton
+                            size="small"
+                            onClick={() => toggleExpandRow(result.filename)}
+                            disabled={result.status !== 'success'}
+                          >
+                            {expandedRows[result.filename] ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                          </IconButton>
+                        </TableCell>
+                        <TableCell>
+                          {result.status === 'success' ? (
+                            <CheckCircleIcon color="success" fontSize="small" />
+                          ) : (
+                            <ErrorIcon color="error" fontSize="small" />
+                          )}
+                        </TableCell>
+                        <TableCell>{result.filename}</TableCell>
+                        <TableCell>
+                          {result.status === 'success' ? (
+                            `Extracted data saved to ${result.output_file}`
+                          ) : (
+                            result.message || 'Error extracting data'
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <Tooltip title="Preview Original PDF">
+                            <IconButton
+                              size="small"
+                              onClick={() => handlePreviewPdf(result.filename)}
+                              disabled={!result.filename.toLowerCase().endsWith('.pdf')}
                             >
-                              {expandedRows[result.filename] ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                              <PdfIcon />
                             </IconButton>
-                          </TableCell>
-                          <TableCell>
-                            {result.status === 'success' ? (
-                              <CheckCircleIcon color="success" fontSize="small" />
-                            ) : (
-                              <ErrorIcon color="error" fontSize="small" />
-                            )}
-                          </TableCell>
-                          <TableCell>{result.filename}</TableCell>
-                          <TableCell>
-                            {result.status === 'success'
-                              ? result.output_file
-                              : result.message
-                            }
-                          </TableCell>
-                          <TableCell>
-                            <Tooltip title="Preview Original PDF">
-                              <IconButton 
-                                size="small" 
-                                onClick={() => handlePreviewPdf(result.filename)}
-                                disabled={!result.filename.toLowerCase().endsWith('.pdf')}
-                              >
-                                <PdfIcon />
-                              </IconButton>
-                            </Tooltip>
-                            {result.status === 'success' && (
-                              <Tooltip title="View Extracted Data">
-                                <IconButton 
-                                  size="small" 
-                                  onClick={() => toggleExpandRow(result.filename)}
+                          </Tooltip>
+                          {' '}
+                          <Tooltip title="View Extracted Data">
+                            <IconButton
+                              size="small"
+                              onClick={() => toggleExpandRow(result.filename)}
+                            >
+                              <CodeIcon />
+                            </IconButton>
+                          </Tooltip>
+                        </TableCell>
+                      </TableRow>
+                      {/* Expanded row for file content */}
+                      {expandedRows[result.filename] && (
+                        <TableRow>
+                          <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={5}>
+                            <Collapse in={expandedRows[result.filename]} timeout="auto" unmountOnExit>
+                              <Box sx={{ margin: 1, p: 1, backgroundColor: 'background.paper' }}>
+                                <Typography variant="h6" gutterBottom component="div">
+                                  Extracted Data
+                                </Typography>
+                                <Box
+                                  sx={{
+                                    p: 2, 
+                                    overflowX: 'auto',
+                                    fontFamily: 'monospace',
+                                    fontSize: '0.875rem',
+                                    backgroundColor: 'grey.100',
+                                    borderRadius: 1
+                                  }}
                                 >
-                                  <CodeIcon />
-                                </IconButton>
-                              </Tooltip>
-                            )}
+                                  {result.output_file && fileContent[result.output_file] ? (
+                                    <pre>{JSON.stringify(fileContent[result.output_file], null, 2)}</pre>
+                                  ) : (
+                                    <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+                                      <CircularProgress size={24} />
+                                    </Box>
+                                  )}
+                                </Box>
+                              </Box>
+                            </Collapse>
                           </TableCell>
                         </TableRow>
-                        {result.status === 'success' && result.output_file && (
-                          <TableRow>
-                            <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={5}>
-                              <Collapse in={expandedRows[result.filename]} timeout="auto" unmountOnExit>
-                                <Box sx={{ margin: 1, p: 1, backgroundColor: 'background.paper' }}>
-                                  <Typography variant="h6" gutterBottom component="div">
-                                    Extracted Content
-                                  </Typography>
-                                  <Box 
-                                    sx={{ 
-                                      p: 2, 
-                                      overflowX: 'auto',
-                                      fontFamily: 'monospace',
-                                      fontSize: '0.875rem',
-                                      backgroundColor: 'grey.100',
-                                      borderRadius: 1
-                                    }}
-                                  >
-                                    {result.output_file && fileContent[result.output_file] ? (
-                                      <pre>{JSON.stringify(fileContent[result.output_file], null, 2)}</pre>
-                                    ) : (
-                                      <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
-                                        <CircularProgress size={24} />
-                                      </Box>
-                                    )}
-                                  </Box>
-                                </Box>
-                              </Collapse>
-                            </TableCell>
-                          </TableRow>
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-          </Paper>
-        </Box>
-        
-        {/* Right side - Schema selection and actions */}
-        <Box sx={{ flex: { xs: '1 1 100%', md: '5 1 0%' } }}>
-          <Paper elevation={2} sx={{ p: 2, mb: 3 }}>
-            <Typography variant="h6" gutterBottom>
-              Schema Selection
-            </Typography>
-            
-            <FormControl fullWidth sx={{ mb: 2 }}>
-              <InputLabel id="schema-select-label">Select Schema</InputLabel>
-              <Select
-                labelId="schema-select-label"
-                value={selectedSchemaId?.toString() || ''}
-                label="Select Schema"
-                onChange={(e) => handleSchemaChange(e.target.value ? Number(e.target.value) : null)}
-              >
-                <MenuItem value="">
-                  <em>None</em>
-                </MenuItem>
-                {schemas.map((schema) => (
-                  <MenuItem key={schema.id} value={schema.id.toString()}>
-                    {schema.name}
-                  </MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            
-            <Button
-              variant="contained"
-              color="primary"
-              fullWidth
-              startIcon={extracting ? <CircularProgress size={20} color="inherit" /> : <LinkIcon />}
-              disabled={!selectedSchemaId || extracting}
-              onClick={handleExtractData}
-            >
-              {extracting ? 'Extracting...' : 'Extract Data with Selected Schema'}
-            </Button>
-          </Paper>
-        </Box>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Paper>
       </Box>
       
       {/* PDF Preview Dialog */}

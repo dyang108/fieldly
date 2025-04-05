@@ -9,3 +9,5 @@ package-lock.json
 .extraction_state/
 .coverage
 frontend/coverage/
+*.log
+data

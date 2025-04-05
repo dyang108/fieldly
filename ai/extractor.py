@@ -214,3 +214,28 @@ Response:"""
         # The actual implementation will be in LLMExtractor
         logger.warning("merge_results called on base DataExtractor class, which does not implement it")
         return {} 
+
+    def merge_results_with_reasoning(self, prompt: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Merge multiple extraction results using the LLM and provide reasoning for decisions
+        
+        Args:
+            prompt: Prompt for the LLM to merge the results with reasoning
+            schema: Schema defining the structure of the data
+            
+        Returns:
+            Dictionary containing:
+                - merged_data: Merged data matching the schema
+                - reasoning: Explanations for merge decisions
+        """
+        # This is a default implementation that should be overridden by subclasses
+        # The actual implementation will be in LLMExtractor
+        logger.warning("merge_results_with_reasoning called on base DataExtractor class, which does not implement it")
+        
+        # Return a placeholder structure that matches the expected format
+        return {
+            "merged_data": {},
+            "reasoning": {
+                "note": "This is a placeholder. Actual implementation should be in a subclass."
+            }
+        } 
