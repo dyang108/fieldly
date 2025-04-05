@@ -146,3 +146,83 @@ The following environment variables can be set to configure the application:
 - `DATABASE_URL`: Database connection URL (default: sqlite:///schemas.db)
 - `DEEPSEEK_API_KEY`: API key for DeepSeek cloud API (required if using API)
 - `DEEPSEEK_API_URL`: URL for DeepSeek API (default: https://api.deepseek.com/v1/chat/completions) 
+
+## Testing
+
+### Backend Testing
+
+The backend uses pytest for unit and integration tests. To run the tests:
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage report
+pytest --cov=. --cov-report=term --cov-report=html
+
+# Run only unit tests
+pytest tests/unit
+
+# Run only integration tests
+pytest tests/integration
+```
+
+### Frontend Testing
+
+The frontend uses Jest for testing React components. To run the tests:
+
+```bash
+cd frontend
+
+# Run all tests
+npm test
+
+# Run tests with coverage report
+npm run test:coverage
+
+# Run tests in watch mode (for development)
+npm run test:watch
+```
+
+## Code Quality and Linting
+
+### Backend Linting
+
+We use several tools to maintain code quality:
+
+```bash
+# Run all linting tools (black, flake8, isort, pylint)
+python scripts/lint.py
+
+# Run in check-only mode (no changes)
+python scripts/lint.py --check
+
+# Individual tools
+black .
+isort --profile black .
+flake8 .
+pylint .
+mypy .
+```
+
+### Frontend Linting
+
+The frontend uses ESLint for TypeScript/React code quality:
+
+```bash
+cd frontend
+
+# Run ESLint
+npm run lint
+```
+
+## Continuous Integration
+
+This project uses GitHub Actions for continuous integration. The following checks are run on each pull request:
+
+- Python tests (pytest)
+- JavaScript tests (Jest)
+- Python linting (black, flake8, isort, pylint)
+- JavaScript linting (ESLint)
+
+The GitHub Actions workflow configuration can be found in the `.github/workflows` directory. 

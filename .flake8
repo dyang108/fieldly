@@ -1,0 +1,6 @@
+[flake8]
+max-line-length = 100
+exclude = .git,__pycache__,build,dist,.env,.venv,venv,*.pyc,node_modules,.mypy_cache,.pytest_cache,.coverage
+ignore = E203, W503
+# E203: whitespace before ':' - Black handles this differently
+# W503: line break before binary operator - Black handles this differently 

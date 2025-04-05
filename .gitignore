@@ -7,3 +7,5 @@ instance/
 node_modules
 package-lock.json
 .extraction_state/
+.coverage
+frontend/coverage/

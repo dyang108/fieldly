@@ -7,6 +7,18 @@ requests==2.31.0
 boto3==1.34.32
 pypdf==5.4.0
 pymupdf4llm==0.0.19
-# for testing and development
+flask-socketio==5.3.6
+eventlet==0.38.0
+pandas==2.2.0
+
+# Testing and linting
 pytest==7.4.3
-black==23.12.1 
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+pytest-flask==1.3.0
+pytest-socket==0.6.0
+black==23.12.1
+flake8==6.1.0
+isort==5.13.2
+pylint==3.0.3
+mypy==1.8.0 
