@@ -556,7 +556,8 @@ def process_markdown_file(input_file: Path, output_file: Path, model: str, use_d
 def process_dataset(dataset_name: str, model: str = DEFAULT_LOCAL_MODEL, use_deepseek: bool = False, api_key: Optional[str] = None) -> None:
     """Process all markdown files in a dataset directory sequentially."""
     data_dir = Path('../.data')
-    input_dir = data_dir / f"{dataset_name}-md"
+    cached_dir = data_dir / "cached"
+    input_dir = cached_dir / f"{dataset_name}-md"
     output_dir = data_dir / f"{dataset_name}-extractedmd"
     
     if not input_dir.exists():

@@ -34,7 +34,6 @@ class DataExtractor(ABC):
         Returns:
             Prompt string for the model
         """
-        print(f"Schema: {schema}")
 
         return f"""Please extract structured data from the following content according to this schema, defined in JSON Schema Draft-07 format:
 
@@ -54,6 +53,10 @@ Your response must be a valid JSON object matching the schema exactly.
 Do not include any explanations or text outside the JSON.
 Do NOT include extraneous fields outside of those specified directly in the JSON Schema.
 It is okay if the JSON object is empty. It is okay if the JSON object is not complete.
+
+Again, the schema in JSON Schema Draft-07 format is:
+
+{json.dumps(schema, indent=2)}
 
 Response:"""
     

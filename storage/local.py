@@ -77,6 +77,12 @@ class LocalStorage(StorageInterface):
             
         for item in storage_path.iterdir():
             if item.is_dir() and not item.name.startswith('.'):
+                # Skip intermediate datasets and the cached directory
+                if (item.name.endswith('-md') or 
+                    item.name.endswith('-extracted') or 
+                    item.name.endswith('-extractedmd') or
+                    item.name == 'cached'):
+                    continue
                 datasets.append(item.name)
                 
         return datasets

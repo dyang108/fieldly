@@ -14,7 +14,7 @@ from constants import (
     STORAGE_TYPE, LOCAL_STORAGE_PATH, S3_BUCKET_NAME, AWS_ACCESS_KEY_ID,
     AWS_SECRET_ACCESS_KEY, AWS_REGION, USE_LOCAL_MODEL, LLM_PROVIDER,
     DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, MODEL_CONFIGS,
-    DEFAULT_LLM_PROVIDER
+    DEFAULT_LLM_PROVIDER, MAX_CHUNK_SIZE
 )
 
 logger = logging.getLogger(__name__)
@@ -190,11 +190,14 @@ def process_file(storage: Storage, dataset_name: str, output_dir: str,
             # For local storage
             base_path = Path(cast(str, storage.config['storage_path']))
             pdf_path = base_path / dataset_name / filename
-            md_path = base_path / f"{dataset_name}-md" / f"{filename}.md"
+            
+            # Use cached directory for intermediate files
+            cached_dir = base_path / "cached"
+            md_path = cached_dir / f"{dataset_name}-md" / f"{filename}.md"
             json_path = base_path / output_dir / f"{filename}.json"
             
             # Create markdown directory if it doesn't exist
-            md_dir = base_path / f"{dataset_name}-md"
+            md_dir = cached_dir / f"{dataset_name}-md"
             md_dir.mkdir(exist_ok=True, parents=True)
             
             # 1. Convert PDF to Markdown if not already done
@@ -251,7 +254,7 @@ def convert_pdf_to_markdown(pdf_path: str, md_path: str) -> None:
         raise
 
 
-def split_content_into_chunks(content: str, max_chunk_size: int = 4000) -> List[str]:
+def split_content_into_chunks(content: str, max_chunk_size: int = MAX_CHUNK_SIZE) -> List[str]:
     """Split markdown content into smaller chunks while preserving structure."""
     chunks: List[str] = []
     current_chunk: List[str] = []

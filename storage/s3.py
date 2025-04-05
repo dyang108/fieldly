@@ -103,6 +103,14 @@ class S3Storage(StorageInterface):
                 for prefix in response['CommonPrefixes']:
                     # Remove trailing slash
                     dataset_name = prefix['Prefix'].rstrip('/')
+                    
+                    # Skip intermediate datasets and the cached directory
+                    if (dataset_name.endswith('-md') or 
+                        dataset_name.endswith('-extracted') or 
+                        dataset_name.endswith('-extractedmd') or
+                        dataset_name == 'cached'):
+                        continue
+                        
                     datasets.append(dataset_name)
             
             return datasets

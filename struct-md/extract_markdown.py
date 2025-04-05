@@ -46,12 +46,15 @@ def process_dataset(dataset_name: str, max_workers: Optional[int] = None) -> Non
     """Process all PDF files in a dataset directory using parallel processing."""
     data_dir = Path('../.data')
     input_dir = data_dir / dataset_name
-    output_dir = data_dir / f"{dataset_name}-md"
+    cached_dir = data_dir / "cached"
+    output_dir = cached_dir / f"{dataset_name}-md"
     
     if not input_dir.exists():
         logger.error(f"Input directory {input_dir} does not exist")
         return
     
+    # Create cached directory if it doesn't exist
+    cached_dir.mkdir(parents=True, exist_ok=True)
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Find all PDF files

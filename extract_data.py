@@ -127,6 +127,12 @@ def extract_dataset(dataset_name, source='local'):
                 storage.create_dataset(output_dir)
                 logger.info(f"Created output directory: {output_dir}")
             
+            # Create cached directory for intermediate files if using local storage
+            if storage_type == 'local' and isinstance(storage.config.get('storage_path'), str):
+                cached_dir = Path(storage.config['storage_path']) / "cached"
+                cached_dir.mkdir(exist_ok=True, parents=True)
+                logger.info(f"Using cached directory: {cached_dir}")
+            
             # Process each file
             results = []
             for file_info in files:
