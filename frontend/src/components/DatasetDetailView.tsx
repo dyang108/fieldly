@@ -1,5 +1,4 @@
-import React from 'react';
-import { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Box,
   Paper,
@@ -104,10 +103,17 @@ export default function DatasetDetailView() {
   const [extracting, setExtracting] = useState(false);
   const [extractionResult, setExtractionResult] = useState<ExtractionResult | null>(null);
   const [showProgress, setShowProgress] = useState<boolean>(false);
-  const [partialResults, setPartialResults] = useState<FileProcessingResult[]>([]);
   const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
   const [selectedPdf, setSelectedPdf] = useState<string | null>(null);
   const [fileContent, setFileContent] = useState<Record<string, any>>({});
+  const [resultsFetchTimer, setResultsFetchTimer] = useState<number | null>(null);
+
+  // Reference to track extraction status to avoid unnecessary fetches
+  const extractionStatusRef = useRef({
+    lastFetchTime: 0,
+    filesProcessed: 0,
+    isCompleted: false
+  });
 
   useEffect(() => {
     if (!source || !datasetName) {
@@ -115,50 +121,83 @@ export default function DatasetDetailView() {
       return;
     }
     
-    fetchData();
+    // Set loading state to true while we fetch data
+    setLoading(true);
+    
+    // First fetch general data and extraction results in parallel
+    Promise.all([
+      fetchData(),
+      fetchExtractionResults()
+    ]).then(() => {
+      // After we have data, check if there's an active extraction
+      checkForActiveExtraction();
+      setLoading(false);
+    }).catch(err => {
+      console.error('Error loading dataset details:', err);
+      setLoading(false);
+    });
+    
+    return () => {
+      // Clear any timers on unmount
+      if (resultsFetchTimer) {
+        clearTimeout(resultsFetchTimer);
+      }
+    };
   }, [source, datasetName]);
 
-  // New socket event handler for file completions
+  // Replace the socket event listener with a refresh listener
   useEffect(() => {
     if (!source || !datasetName || !extracting) return;
 
-    // Set up event listener for file completions
-    const handleFileCompletion = (data: any) => {
-      console.log('File processing completed:', data);
-      if (data && data.result) {
-        setPartialResults(prev => {
-          // Check if we already have this file result
-          const existingIndex = prev.findIndex(r => r.filename === data.result.filename);
-          if (existingIndex >= 0) {
-            // Replace existing entry
-            const updatedResults = [...prev];
-            updatedResults[existingIndex] = data.result;
-            return updatedResults;
-          } else {
-            // Add new entry
-            return [...prev, data.result];
-          }
-        });
+    // Set up an extraction progress listener to trigger result refreshes
+    const handleExtractionProgress = () => {
+      // Throttle refreshes to avoid too many API calls
+      const now = Date.now();
+      if (now - extractionStatusRef.current.lastFetchTime > 5000) { // Refresh at most every 5 seconds
+        console.log('Extraction progress detected, refreshing results...');
+        fetchExtractionResults();
+        extractionStatusRef.current.lastFetchTime = now;
       }
     };
 
-    // Add event listener to socket
-    document.addEventListener('file_processed', (e: any) => handleFileCompletion(e.detail));
+    // Listen for file completions and general progress updates
+    document.addEventListener('file_completed', handleExtractionProgress);
+    document.addEventListener('extraction_progress', handleExtractionProgress);
 
     // Cleanup
     return () => {
-      document.removeEventListener('file_processed', (e: any) => handleFileCompletion(e.detail));
+      document.removeEventListener('file_completed', handleExtractionProgress);
+      document.removeEventListener('extraction_progress', handleExtractionProgress);
     };
   }, [source, datasetName, extracting]);
 
+  // Check if there's an active extraction session
+  const checkForActiveExtraction = async () => {
+    if (!source || !datasetName) return;
+    
+    try {
+      const response = await api.get(
+        `/api/extraction/status?source=${encodeURIComponent(source)}&dataset_name=${encodeURIComponent(datasetName)}`
+      );
+      
+      if (response.data && response.data.is_active) {
+        console.log('Active extraction session detected');
+        setShowProgress(true);
+      }
+    } catch (err) {
+      console.error('Error checking extraction status:', err);
+    }
+  };
+
   const fetchData = async () => {
-    setLoading(true);
+    if (!source || !datasetName) return;
+    
     try {
       // Fetch dataset files, schemas, and mapping information in parallel
       const [filesResponse, schemasResponse, mappingResponse] = await Promise.all([
-        api.get(`/api/dataset-files/${source!}/${encodeURIComponent(datasetName!)}`),
+        api.get(`/api/dataset-files/${source}/${encodeURIComponent(datasetName)}`),
         api.get('/api/schemas'),
-        api.get(`/api/dataset-mapping/${source!}/${encodeURIComponent(datasetName!)}`)
+        api.get(`/api/dataset-mapping/${source}/${encodeURIComponent(datasetName)}`)
       ]);
 
       // Handle file data - could be array of strings or objects
@@ -193,8 +232,44 @@ export default function DatasetDetailView() {
     } catch (err) {
       console.error('Error fetching data:', err);
       setError('Failed to fetch dataset information');
-    } finally {
-      setLoading(false);
+    }
+  };
+
+  // Function to fetch extraction results
+  const fetchExtractionResults = async () => {
+    if (!source || !datasetName) return;
+    
+    try {
+      console.log(`Fetching extraction results for ${source}/${datasetName}`);
+      
+      const response = await api.get(
+        `/api/extraction-results/${source}/${encodeURIComponent(datasetName)}`
+      );
+      
+      // If we get valid results, update the state
+      if (response.data && Array.isArray(response.data.results)) {
+        const resultsCount = response.data.results.length;
+        console.log(`Got ${resultsCount} extraction results`);
+        
+        if (resultsCount > 0) {
+          console.log('Sample result:', response.data.results[0]);
+        }
+        
+        setExtractionResult({
+          dataset: datasetName,
+          output_directory: response.data.output_directory,
+          processed_files: response.data.processed_files,
+          results: response.data.results
+        });
+        
+        // Update our tracking to avoid unnecessary refreshes
+        extractionStatusRef.current.filesProcessed = response.data.processed_files;
+      } else {
+        console.log('No extraction results found or invalid response format');
+      }
+    } catch (err) {
+      console.error('Error fetching extraction results:', err);
+      // Don't show error to user as this might just be polling
     }
   };
 
@@ -227,8 +302,14 @@ export default function DatasetDetailView() {
     setExtractionResult(null);
     setShowProgress(true);
     setError('');
-    setPartialResults([]);
     setExpandedRows({});
+    
+    // Reset extraction tracking
+    extractionStatusRef.current = {
+      lastFetchTime: 0,
+      filesProcessed: 0,
+      isCompleted: false
+    };
     
     try {
       // Get the schema object
@@ -237,6 +318,7 @@ export default function DatasetDetailView() {
         throw new Error('Selected schema not found');
       }
       
+      // Start extraction process
       const response = await api.post(
         `/api/extract/${source!}/${encodeURIComponent(datasetName!)}`,
         schema.schema,
@@ -247,8 +329,13 @@ export default function DatasetDetailView() {
         }
       );
       
-      setExtractionResult(response.data);
       setNotification(`Data extraction completed for ${datasetName}`);
+      
+      // Fetch the results after extraction completes
+      fetchExtractionResults();
+      
+      // Mark as completed
+      extractionStatusRef.current.isCompleted = true;
     } catch (err) {
       console.error('Error extracting data:', err);
       setError('Failed to extract data from dataset');
@@ -261,8 +348,11 @@ export default function DatasetDetailView() {
     console.log('Extraction completed, hiding progress component');
     setShowProgress(false);
     
-    // Refresh data to ensure we have the latest results
-    fetchData();
+    // Fetch the final results when extraction completes
+    fetchExtractionResults();
+    
+    // Mark as completed
+    extractionStatusRef.current.isCompleted = true;
   };
 
   const toggleExpandRow = (filename: string) => {
@@ -317,9 +407,8 @@ export default function DatasetDetailView() {
     setTimeout(() => setNotification(''), 3000);
   };
 
-  // Determine which results to show
-  const resultsToShow = extractionResult ? extractionResult.results : 
-                       partialResults.length > 0 ? partialResults : [];
+  // Determine which results to show - now we only use extractionResult
+  const resultsToShow = extractionResult ? extractionResult.results : [];
 
   if (loading) {
     return (
@@ -443,22 +532,46 @@ export default function DatasetDetailView() {
           </Paper>
           
           {/* Extraction Results table */}
-          {resultsToShow.length > 0 && (
-            <Paper elevation={2} sx={{ p: 2 }}>
-              <Typography variant="h6" gutterBottom>
+          <Paper elevation={2} sx={{ p: 2 }}>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Typography variant="h6">
                 Extraction Results
                 {extractionResult && (
                   <Typography variant="body2" component="span" sx={{ ml: 2 }}>
                     ({extractionResult.processed_files} files processed)
                   </Typography>
                 )}
-                {partialResults.length > 0 && !extractionResult && (
-                  <Typography variant="body2" component="span" sx={{ ml: 2 }}>
-                    ({partialResults.length} files processed so far)
-                  </Typography>
-                )}
               </Typography>
-              
+              <Button
+                startIcon={<RefreshIcon />}
+                size="small"
+                onClick={fetchExtractionResults}
+                variant="outlined"
+              >
+                Refresh Results
+              </Button>
+            </Box>
+            
+            {loading ? (
+              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 4 }}>
+                <CircularProgress size={40} sx={{ mb: 2 }} />
+                <Typography variant="body1">Loading extraction results...</Typography>
+              </Box>
+            ) : resultsToShow.length === 0 ? (
+              <Box sx={{ textAlign: 'center', py: 4, backgroundColor: 'background.paper' }}>
+                <Typography variant="body1" color="text.secondary">
+                  No extraction results found for this dataset.
+                </Typography>
+                <Button 
+                  variant="text" 
+                  startIcon={<RefreshIcon />} 
+                  onClick={fetchExtractionResults}
+                  sx={{ mt: 2 }}
+                >
+                  Refresh
+                </Button>
+              </Box>
+            ) : (
               <TableContainer sx={{ maxHeight: 400, overflow: 'auto' }}>
                 <Table stickyHeader size="small">
                   <TableHead>
@@ -560,8 +673,8 @@ export default function DatasetDetailView() {
                   </TableBody>
                 </Table>
               </TableContainer>
-            </Paper>
-          )}
+            )}
+          </Paper>
         </Box>
         
         {/* Right side - Schema selection and actions */}

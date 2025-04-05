@@ -454,6 +454,71 @@ def get_file_content():
         logger.error(f"Error fetching file content: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
+# New endpoint to get available extraction results for a dataset
+@app.route('/api/extraction-results/<source>/<path:dataset_name>', methods=['GET'])
+def get_extraction_results(source, dataset_name):
+    """Get all available extraction results for a dataset"""
+    try:
+        logger.info(f"Fetching extraction results for {source}/{dataset_name}")
+        
+        results = []
+        results_dir = None
+        directory = os.path.join('.data', 'cached', f"{dataset_name}-extracted")
+        print(directory)
+        if os.path.exists(directory):
+            logger.info(f"Found results directory at {directory}")
+            results_dir = directory
+            
+            # Get the list of JSON files in this directory
+            file_names = os.listdir(directory)
+            
+            for result_file in file_names:
+                if result_file.endswith('.json'):
+                    try:
+                        # Get the original filename by removing .json extension
+                        original_filename = result_file.replace('.json', '')
+                        
+                        # Create the output file path
+                        output_file = os.path.join(directory, result_file)
+                        
+                        # Read the file content to check if it's valid
+                        with open(output_file, 'r') as f:
+                            content = json.load(f)
+                        
+                        # Add to results list
+                        results.append({
+                            'filename': original_filename,
+                            'status': 'success',
+                            'output_file': output_file
+                        })
+                    except Exception as e:
+                        logger.error(f"Error processing result file {result_file}: {str(e)}")
+                        results.append({
+                            'filename': original_filename,
+                            'status': 'error',
+                            'message': f'Error reading extraction result: {str(e)}'
+                        })
+    
+        if not results_dir:
+            logger.info(f"No results directories found for {source}/{dataset_name}")
+            results_dir = os.path.join('.data', 'cached', source, dataset_name)  # Default to cached location
+        
+        return jsonify({
+            'source': source,
+            'dataset_name': dataset_name,
+            'results': results,
+            'output_directory': results_dir,
+            'processed_files': len(results)
+        })
+    except Exception as e:
+        logger.error(f"Error fetching extraction results: {str(e)}", exc_info=True)
+        return jsonify({
+            'error': str(e),
+            'source': source,
+            'dataset_name': dataset_name,
+            'results': []
+        }), 500
+
 if __name__ == '__main__':
     # Use eventlet's WSGI server when running directly
     socketio.run(

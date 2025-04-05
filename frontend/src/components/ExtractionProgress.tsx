@@ -90,6 +90,19 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
   const reconnectTimerRef = useRef<any>(null);
   const roomId = `${source}_${datasetName}`;
 
+  // Function to emit a progress event that parent components can listen for
+  const emitProgressEvent = () => {
+    // Create a generic extraction progress event
+    const progressEvent = new CustomEvent('extraction_progress', {
+      detail: {
+        source: source,
+        datasetName: datasetName,
+        timestamp: Date.now()
+      }
+    });
+    document.dispatchEvent(progressEvent);
+  };
+
   // Debug function to trace state updates
   const debugStateUpdate = (source: string, data: any) => {
     console.log(`State update from ${source}:`, data);
@@ -219,29 +232,44 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
     
     const handleExtractionState = (data: ExtractionState) => {
       if (!isMounted.current) return;
-      console.log('Extraction state update:', data);
+      console.log('[Socket] Extraction state update received:', data);
       debugStateUpdate('extraction_state', data);
       
       // Make sure we have a complete state update
       if (data) {
-        setState(prev => ({
-          ...prev,
-          ...data
-        }));
+        setState(prev => {
+          const newState = {
+            ...prev,
+            ...data
+          };
+          console.log('[Socket] Updated extraction state:', newState);
+          return newState;
+        });
+        
+        // Emit progress event
+        emitProgressEvent();
       }
     };
     
     const handleExtractionProgress = (data: { current_file: string; file_progress: number }) => {
       if (!isMounted.current) return;
+      console.log('[Socket] Extraction progress update received:', data);
       debugStateUpdate('extraction_progress', data);
       
-      setState(prev => ({
-        ...prev,
-        current_file: data.current_file,
-        file_progress: data.file_progress,
-        // Ensure the status is in_progress when we get progress updates
-        status: 'in_progress'
-      }));
+      setState(prev => {
+        const newState = {
+          ...prev,
+          current_file: data.current_file,
+          file_progress: data.file_progress,
+          // Ensure the status is in_progress when we get progress updates
+          status: 'in_progress'
+        };
+        console.log('[Socket] Updated progress state:', newState);
+        return newState;
+      });
+      
+      // Emit progress event for file progress updates
+      emitProgressEvent();
     };
     
     const handleFileCompleted = (data: { 
@@ -268,17 +296,18 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
         return newState;
       });
       
-      // Emit a custom event that the parent component can listen for
-      const fileProcessedEvent = new CustomEvent('file_processed', {
+      // Emit a general progress event
+      emitProgressEvent();
+      
+      // Also emit a file-specific event that more specific listeners could use
+      const fileCompletedEvent = new CustomEvent('file_completed', {
         detail: {
-          result: {
-            filename: data.completed_file,
-            status: 'success', // Assuming success for now, we'll need to modify this if we get status info
-            output_file: `results/${source}/${datasetName}/${data.completed_file.replace(/\.[^/.]+$/, '.json')}`,
-          }
+          filename: data.completed_file,
+          processed_files: data.processed_files,
+          total_files: data.total_files
         }
       });
-      document.dispatchEvent(fileProcessedEvent);
+      document.dispatchEvent(fileCompletedEvent);
     };
     
     const handleMergedData = (data: { merged_data: any }) => {
