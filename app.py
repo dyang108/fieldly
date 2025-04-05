@@ -16,9 +16,6 @@ import collections
 import json
 import time
 from pathlib import Path
-import threading
-import inspect
-import sys
 
 # All other imports
 from db import init_db
