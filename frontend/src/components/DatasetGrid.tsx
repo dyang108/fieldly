@@ -290,74 +290,57 @@ export default function DatasetGrid() {
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 3 }}>
           {mappings.map((mapping) => {
             const mappingKey = `${mapping.source}-${mapping.datasetName}`;
-            const isApplying = applyingSchema === mappingKey;
             const isLoadingFiles = loadingFiles[mappingKey];
             
             return (
               <Box key={mappingKey} sx={{ width: { xs: '100%', sm: 'calc(50% - 12px)', md: 'calc(33.33% - 16px)' } }}>
                 <Card elevation={3} sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
-                  <CardHeader
-                    avatar={
-                      <Avatar sx={{ bgcolor: mapping.source === 'local' ? 'info.main' : 'warning.main' }}>
-                        <FolderIcon />
-                      </Avatar>
-                    }
-                    title={mapping.datasetName}
-                    subheader={
-                      <Chip
-                        label={mapping.source.toUpperCase()}
-                        size="small"
-                        color={mapping.source === 'local' ? 'info' : 'warning'}
-                        sx={{ mt: 1 }}
-                      />
-                    }
-                  />
-                  
-                  <CardContent sx={{ flexGrow: 1 }}>
-                    <Typography variant="subtitle2" gutterBottom>
-                      Schema: {mapping.schemaName || 'None'}
-                    </Typography>
+                  <CardActionArea onClick={() => handleViewDataset(mapping)}>
+                    <CardHeader
+                      avatar={
+                        <Avatar sx={{ bgcolor: mapping.source === 'local' ? 'info.main' : 'warning.main' }}>
+                          <FolderIcon />
+                        </Avatar>
+                      }
+                      title={mapping.datasetName}
+                      subheader={
+                        <Chip
+                          label={mapping.source.toUpperCase()}
+                          size="small"
+                          color={mapping.source === 'local' ? 'info' : 'warning'}
+                          sx={{ mt: 1 }}
+                        />
+                      }
+                    />
                     
-                    <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
-                      Example Files:
-                    </Typography>
-                    
-                    {isLoadingFiles ? (
-                      <Box sx={{ display: 'flex', justifyContent: 'center', my: 1 }}>
-                        <CircularProgress size={20} />
-                      </Box>
-                    ) : mapping.exampleFiles && mapping.exampleFiles.length > 0 ? (
-                      <Box component="ul" sx={{ pl: 2, mt: 1 }}>
-                        {mapping.exampleFiles.map((file, index) => (
-                          <Typography component="li" variant="body2" key={index}>
-                            {typeof file === 'string' ? file : (file.name || file.path)}
-                          </Typography>
-                        ))}
-                      </Box>
-                    ) : (
-                      <Typography variant="body2" color="text.secondary">
-                        No files found
+                    <CardContent sx={{ flexGrow: 1 }}>
+                      <Typography variant="subtitle2" gutterBottom>
+                        Schema: {mapping.schemaName || 'None'}
                       </Typography>
-                    )}
-                  </CardContent>
-                  
-                  <CardActions>
-                    <Button 
-                      size="small" 
-                      startIcon={isApplying ? <CircularProgress size={16} /> : <LinkIcon />}
-                      disabled={!mapping.schemaId || isApplying}
-                      onClick={() => handleApplySchema(mapping)}
-                    >
-                      Apply Schema
-                    </Button>
-                    <Box sx={{ flexGrow: 1 }} />
-                    <IconButton 
-                      color="primary"
-                      onClick={() => handleViewDataset(mapping)}
-                    >
-                      <ArrowForwardIcon />
-                    </IconButton>
-                  </CardActions>
+                      
+                      <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
+                        Example Files:
+                      </Typography>
+                      
+                      {isLoadingFiles ? (
+                        <Box sx={{ display: 'flex', justifyContent: 'center', my: 1 }}>
+                          <CircularProgress size={20} />
+                        </Box>
+                      ) : mapping.exampleFiles && mapping.exampleFiles.length > 0 ? (
+                        <Box component="ul" sx={{ pl: 2, mt: 1 }}>
+                          {mapping.exampleFiles.map((file, index) => (
+                            <Typography component="li" variant="body2" key={index}>
+                              {typeof file === 'string' ? file : (file.name || file.path)}
+                            </Typography>
+                          ))}
+                        </Box>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary">
+                          No files found
+                        </Typography>
+                      )}
+                    </CardContent>
+                  </CardActionArea>
                 </Card>
               </Box>
             );

@@ -52,8 +52,7 @@ import axios from 'axios';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import ExtractionProgress from './ExtractionProgress';
 import { 
-  isRoomActive, 
-  clearAllRoomData
+  isRoomActive
 } from '../utils/socket';
 
 interface Schema {
@@ -403,15 +402,6 @@ export default function DatasetDetailView() {
     setSelectedPdf(null);
   };
   
-  // Function to reset all socket room data
-  const handleClearAllRooms = () => {
-    console.log('DatasetDetailView: Clearing all room data');
-    clearAllRoomData();
-    setShowProgress(false);
-    setNotification('All room data cleared');
-    setTimeout(() => setNotification(''), 3000);
-  };
-
   // Determine which results to show - now we only use extractionResult
   const resultsToShow = extractionResult ? extractionResult.results : [];
 
@@ -452,15 +442,6 @@ export default function DatasetDetailView() {
         </Box>
         
         <Box>
-          <Tooltip title="Reset socket rooms">
-            <IconButton
-              color="error"
-              onClick={handleClearAllRooms}
-              sx={{ mr: 1 }}
-            >
-              <DeleteIcon />
-            </IconButton>
-          </Tooltip>
           <Button
             startIcon={<RefreshIcon />}
             variant="outlined"

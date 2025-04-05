@@ -15,10 +15,10 @@ export default function Navigation() {
   };
   
   return (
-    <AppBar position="static">
+    <AppBar position="static" sx={{ width: '100%' }}>
       <Toolbar>
         <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          Schema Generator
+          Fieldly
         </Typography>
         
         <Box sx={{ display: 'flex', gap: 1 }}>

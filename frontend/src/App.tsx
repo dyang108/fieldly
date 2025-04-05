@@ -48,7 +48,7 @@ function App() {
             variant="outlined"
           >
             <Typography variant="body2" color="text.secondary">
-              Schema Generator © {new Date().getFullYear()}
+              Fieldly © {new Date().getFullYear()}
             </Typography>
           </Paper>
         </Box>
