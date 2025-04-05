@@ -420,6 +420,13 @@ def complete_extraction(source: str, dataset_name: str, success: bool, message: 
     
     if socketio:
         try:
+            # Send a debug notification first
+            socketio.emit('debug_message', {
+                'message': f"Extraction completed for {room}: success={success}"
+            }, room=room)
+            logger.info(f"Sent debug notification for completion of {room}")
+            
+            # Then send the actual completion event
             socketio.emit('extraction_completed', {
                 'success': success,
                 'message': message,
@@ -428,6 +435,13 @@ def complete_extraction(source: str, dataset_name: str, success: bool, message: 
                 'duration': state['duration']
             }, room=room)
             logger.info(f"Extraction completed for {room}: success={success}, duration={state['duration']:.2f}s")
+            
+            # Also emit a general event for any listeners
+            socketio.emit('extraction_status_change', {
+                'room': room,
+                'status': 'completed' if success else 'failed',
+                'message': message
+            }, room=room)
         except Exception as e:
             logger.error(f"Error sending extraction completed event: {str(e)}")
     else:

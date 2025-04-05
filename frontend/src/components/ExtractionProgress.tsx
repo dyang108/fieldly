@@ -334,20 +334,29 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
       duration: number;
     }) => {
       if (!isMounted.current) return;
+      console.log('[Socket] Extraction completed event received:', data);
       debugStateUpdate('extraction_completed', data);
       
-      setState(prev => ({
-        ...prev,
-        status: data.success ? 'completed' : 'failed',
-        message: data.message,
-        duration: data.duration,
-        processed_files: data.processed_files,
-        total_files: data.total_files
-      }));
+      setState(prev => {
+        const newState = {
+          ...prev,
+          status: data.success ? 'completed' : 'failed',
+          message: data.message,
+          duration: data.duration,
+          processed_files: data.processed_files,
+          total_files: data.total_files
+        };
+        console.log('[Socket] Updated state with extraction completed:', newState);
+        return newState;
+      });
       
-      if (onComplete) {
-        onComplete();
-      }
+      // Always run this on a slight delay to ensure state is updated first
+      setTimeout(() => {
+        console.log('[Socket] Calling onComplete callback');
+        if (onComplete) {
+          onComplete();
+        }
+      }, 500);
     };
     
     const handleRoomJoined = (data: { room: string }) => {
@@ -426,6 +435,37 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
     socket.current.on('room_joined', handleRoomJoined);
     socket.current.on('file_chunks_updated', handleFileChunksUpdated);
     socket.current.on('chunk_progress', handleChunkProgress);
+    
+    // Add listener for debug messages
+    socket.current.on('debug_message', (data: { message: string }) => {
+      console.log(`[Socket] Debug message received: ${data.message}`);
+      
+      // If it includes completion info, ensure we call onComplete
+      if (data.message.includes('completed') && onComplete) {
+        console.log('[Socket] Debug message indicates completion, triggering onComplete');
+        setTimeout(() => onComplete(), 300);
+      }
+    });
+    
+    // Add listener for status changes
+    socket.current.on('extraction_status_change', (data: { room: string, status: string, message: string }) => {
+      console.log(`[Socket] Status change: ${data.status} - ${data.message}`);
+      
+      if (data.status === 'completed' || data.status === 'failed') {
+        console.log('[Socket] Status change indicates completion, updating state');
+        setState(prev => ({
+          ...prev,
+          status: data.status,
+          message: data.message
+        }));
+        
+        // If completed, ensure we call onComplete
+        if (onComplete) {
+          console.log('[Socket] Calling onComplete due to status change');
+          setTimeout(() => onComplete(), 300);
+        }
+      }
+    });
 
     // Set up auto-reconnect if we don't receive connection confirmation
     reconnectTimerRef.current = setTimeout(() => {
@@ -462,6 +502,8 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
         socket.current.off('room_joined', handleRoomJoined);
         socket.current.off('file_chunks_updated', handleFileChunksUpdated);
         socket.current.off('chunk_progress', handleChunkProgress);
+        socket.current.off('debug_message');
+        socket.current.off('extraction_status_change');
       }
     };
   }, [source, datasetName, roomId, activeSession, onComplete]);

@@ -348,7 +348,12 @@ export default function DatasetDetailView() {
     console.log('Extraction completed, hiding progress component');
     setShowProgress(false);
     
+    // Show notification to the user
+    setNotification(`Extraction completed for ${datasetName}`);
+    setTimeout(() => setNotification(''), 3000);
+    
     // Fetch the final results when extraction completes
+    console.log('Fetching final extraction results');
     fetchExtractionResults();
     
     // Mark as completed
