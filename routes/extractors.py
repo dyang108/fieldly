@@ -280,6 +280,8 @@ def split_content_into_chunks(content: str, max_chunk_size: int = 4000) -> List[
 
 def merge_chunk_data(accumulated_data: Dict[str, Any], chunk_data: Dict[str, Any]) -> Dict[str, Any]:
     """Merge data from a chunk into accumulated data, taking the first non-null value for each field."""
+    
+    # If accumulated_data is empty, return chunk_data directly
     if not accumulated_data:
         return chunk_data
     
@@ -418,12 +420,11 @@ def extract_data_from_markdown(md_path: str, schema: Dict[str, Any]) -> Dict[str
         
         # Extract data from the chunk
         chunk_data = extractor.extract_data(chunk, schema)
+        logger.info(f"Extracted data from chunk {i}: {json.dumps(chunk_data, indent=2)}")
         
         # Merge the chunk data into accumulated data
         accumulated_data = merge_chunk_data(accumulated_data, chunk_data)
-        
-        # Log the accumulated data
-        logger.info(f"Accumulated data after chunk {i}:")
-        print_accumulated_data(accumulated_data, schema)
+        logger.info(f"Accumulated data after chunk {i}: {json.dumps(accumulated_data, indent=2)}")
     
+    logger.info(f"Final extracted data: {json.dumps(accumulated_data, indent=2)}")
     return accumulated_data 

@@ -116,6 +116,7 @@ Response:"""
         # For any other type, return as is
         return data
     
+    # TODO: remove union type, only accept dict
     def clean_json_response(self, response: str, schema: Union[Dict[str, Any], str]) -> Optional[Dict[str, Any]]:
         """
         Clean and extract JSON from a model response, filtering to match schema
@@ -130,7 +131,12 @@ Response:"""
         # Ensure schema is a dictionary
         if isinstance(schema, str):
             try:
-                schema = json.loads(schema)
+                # handle the case where the schema is a JSON string wrapped in triple backticks
+                # and the case where the schema is just a JSON string
+                if re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', schema):
+                    schema = json.loads(re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', schema).group(1))
+                else:
+                    schema = json.loads(schema)
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse schema JSON: {str(e)}")
                 return None

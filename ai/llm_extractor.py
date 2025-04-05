@@ -29,7 +29,6 @@ class LLMExtractor(DataExtractor):
             temperature: Temperature for model generation (default from constants)
         """
         # Get provider from argument, environment variable, or default constant
-        print(f"provider: {provider}, os.environ.get('LLM_PROVIDER'): {os.environ.get('LLM_PROVIDER')}, DEFAULT_LLM_PROVIDER: {DEFAULT_LLM_PROVIDER}")
         self.provider = provider or os.environ.get('LLM_PROVIDER') or DEFAULT_LLM_PROVIDER
         self.use_api = use_api
         self.temperature = temperature
@@ -74,6 +73,7 @@ class LLMExtractor(DataExtractor):
         else:
             response_text = self._call_local_api(prompt)
         
+        logger.debug(f"Response text: {response_text}")
         # Parse the response
         if response_text:
             extracted_data = self.clean_json_response(response_text, schema)
@@ -109,7 +109,7 @@ class LLMExtractor(DataExtractor):
                 
                 result = response.json()
                 logger.debug(f"Received response from local {self.provider} API")
-                
+                logger.debug(f"Result: {result}")
                 # Extract content from response
                 return result["message"]["content"]
             else:
