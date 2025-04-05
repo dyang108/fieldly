@@ -17,24 +17,20 @@ import {
   ExpandLess, 
   Refresh as RefreshIcon,
   WifiOff as WifiOffIcon,
-  Sync as SyncIcon,
   Visibility as VisibilityIcon
 } from '@mui/icons-material';
 import { 
   getSocket, 
   joinRoom, 
-  leaveRoom, 
-  isSocketConnected, 
-  forceNewConnection,
-  isRoomActive
+  leaveRoom,
+  isSocketConnected 
 } from '../utils/socket';
 
-// Constants for storage
 interface ExtractionProgressProps {
   source: string;
   datasetName: string;
   onComplete?: () => void;
-  initialMode?: 'active' | 'check'; // New prop to control initial mode
+  initialMode?: 'active' | 'check';
 }
 
 interface ExtractionState {
@@ -49,6 +45,10 @@ interface ExtractionState {
   end_time?: number;
   duration?: number;
   message?: string;
+  total_chunks: number;
+  processed_chunks: number;
+  current_file_chunks: number;
+  current_file_chunk: number;
 }
 
 interface SimplifiedMergedData {
@@ -57,7 +57,13 @@ interface SimplifiedMergedData {
   status: string;
 }
 
-const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, datasetName, onComplete, initialMode = 'check' }) => {
+const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ 
+  source, 
+  datasetName, 
+  onComplete, 
+  initialMode = 'check' 
+}) => {
+  // Core state
   const [state, setState] = useState<ExtractionState>({
     status: 'idle',
     total_files: 0,
@@ -65,22 +71,57 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, dataset
     current_file: '',
     file_progress: 0,
     merged_data: {},
-    files: []
+    files: [],
+    total_chunks: 0,
+    processed_chunks: 0,
+    current_file_chunks: 0,
+    current_file_chunk: 0
   });
   const [error, setError] = useState<string>('');
   const [connected, setConnected] = useState<boolean>(false);
-  const [connecting, setConnecting] = useState<boolean>(false);
   const [simplifiedData, setSimplifiedData] = useState<SimplifiedMergedData | null>(null);
   const [showDetails, setShowDetails] = useState<boolean>(false);
-  const [reconnectAttempts, setReconnectAttempts] = useState<number>(0);
-  const [socketInitialized, setSocketInitialized] = useState<boolean>(false);
   const [checkingStatus, setCheckingStatus] = useState<boolean>(false);
   const [activeSession, setActiveSession] = useState<boolean>(initialMode === 'active');
+  const [receivedData, setReceivedData] = useState<boolean>(false);
   
+  // References
   const isMounted = useRef(true);
-  
+  const socket = useRef<any>(null);
+  const reconnectTimerRef = useRef<any>(null);
   const roomId = `${source}_${datasetName}`;
 
+  // Debug function to trace state updates
+  const debugStateUpdate = (source: string, data: any) => {
+    console.log(`[Socket Event] ${source}:`, data);
+    
+    // Log the current state before update
+    console.log(`Current state before update:`, {
+      status: state.status,
+      processed_files: state.processed_files,
+      total_files: state.total_files,
+      file_progress: state.file_progress
+    });
+    
+    // If we received any data from socket but still show as disconnected,
+    // update our connection status
+    if (!connected) {
+      console.log('Received socket data while disconnected - updating connection status');
+      setConnected(true);
+      setReceivedData(true);
+    }
+  };
+
+  // Effect to check for real connection status
+  useEffect(() => {
+    // If we received data but show disconnected, fix the connection state
+    if (receivedData && !connected && socket.current) {
+      console.log('Received socket data while showing disconnected - fixing connection state');
+      setConnected(true);
+    }
+  }, [receivedData, connected]);
+
+  // Check if there's an active extraction session
   const checkExtractionSession = useCallback(async () => {
     if (!source || !datasetName) return;
     
@@ -88,7 +129,6 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, dataset
     setError('');
     
     try {
-      // Call API to check if there's an active extraction session
       const response = await fetch(`http://localhost:5000/api/extraction-room-status/${source}/${encodeURIComponent(datasetName)}`);
       const data = await response.json();
       
@@ -109,127 +149,172 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, dataset
     }
   }, [source, datasetName, roomId]);
 
-  const connectToSocket = useCallback(() => {
-    if (!source || !datasetName || !activeSession) return;
+  // Poll for connection status to ensure UI matches reality
+  useEffect(() => {
+    if (!activeSession || !source || !datasetName) return;
     
-    console.log(`Setting up extraction progress connection for ${roomId}`);
+    const checkConnectionStatus = () => {
+      const isConnected = isSocketConnected();
+      const socketExists = !!socket.current;
+      
+      if (isConnected && socketExists && !connected) {
+        console.log('Connection check: Socket is connected but UI shows disconnected - updating state');
+        setConnected(true);
+        
+        // Make sure we're in the right room
+        joinRoom(source, datasetName);
+        
+        // Fetch current state to make sure we have the latest data
+        fetchCurrentState();
+      }
+    };
     
-    // Set connecting state right away
-    setConnecting(true);
+    // Check immediately on mount
+    checkConnectionStatus();
     
-    const socket = getSocket();
+    // Then check every few seconds
+    const intervalId = setInterval(checkConnectionStatus, 3000);
     
-    if (!socket) {
-      console.log(`Socket not available for ${roomId}, cannot proceed`);
-      setError('Could not connect to extraction service. Please try again.');
-      setConnecting(false);
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [activeSession, source, datasetName, connected]);
+
+  // Connect to socket for the extraction session
+  useEffect(() => {
+    if (!activeSession || !source || !datasetName) return;
+
+    console.log(`[Socket] Setting up socket connection for ${roomId}`);
+    
+    // Clear any previous reconnect timers
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    
+    // Get socket instance
+    socket.current = getSocket();
+    
+    if (!socket.current) {
+      console.error('[Socket] Unable to get socket instance');
+      setError('Could not connect to extraction service');
       return;
     }
-    
-    // Only set socketInitialized if we have a valid socket object
-    setSocketInitialized(true);
-    
-    // If already connected, update state immediately
-    if (socket.connected) {
-      console.log('Socket already connected, joining room immediately');
-      joinRoom(source, datasetName);
-      setConnected(true);
-      setConnecting(false);
-    }
-    
-    const onConnect = () => {
+
+    // Setup event handlers
+    const handleConnect = () => {
       if (!isMounted.current) return;
-      
-      console.log('Socket connected in ExtractionProgress');
+      console.log(`[Socket] Connected for ${roomId}`);
       setConnected(true);
-      setConnecting(false);
       setError('');
-      
+
+      // Join room and request current status
+      console.log(`[Socket] Joining room ${roomId}`);
       joinRoom(source, datasetName);
+      
+      // Also fetch current state to make sure we're in sync
+      console.log('[Socket] Fetching current state to ensure sync');
+      fetchCurrentState();
     };
     
-    const onConnectError = (err: Error) => {
+    const handleDisconnect = (reason: string) => {
       if (!isMounted.current) return;
-      
-      console.error('Socket connection error:', err);
-      setError(`Connection error: ${err.message}`);
+      console.log(`[Socket] Disconnected: ${reason}`);
       setConnected(false);
-      setConnecting(false);
-      
-      setReconnectAttempts((prev) => prev + 1);
     };
     
-    const onDisconnect = (reason: string) => {
+    const handleError = (err: any) => {
       if (!isMounted.current) return;
+      console.error('[Socket] Error:', err);
+      setError(typeof err === 'string' ? err : (err.message || 'Connection error'));
+    };
+    
+    const handleExtractionState = (data: ExtractionState) => {
+      if (!isMounted.current) return;
+      console.log('[Socket] Extraction state update received:', data);
+      debugStateUpdate('extraction_state', data);
       
-      console.log(`Socket disconnected in ExtractionProgress: ${reason}`);
-      setConnected(false);
-      setConnecting(false);
-      
-      if (reason === 'io server disconnect' || reason === 'transport close') {
-        setError(`Disconnected: ${reason}. Attempting to reconnect...`);
+      // Make sure we have a complete state update
+      if (data) {
+        setState(prev => {
+          const newState = {
+            ...prev,
+            ...data
+          };
+          console.log('[Socket] Updated extraction state:', newState);
+          return newState;
+        });
       }
     };
     
-    const onExtractionState = (data: ExtractionState) => {
+    const handleExtractionProgress = (data: { current_file: string; file_progress: number }) => {
       if (!isMounted.current) return;
+      console.log('[Socket] Extraction progress update received:', data);
+      debugStateUpdate('extraction_progress', data);
       
-      console.log('Received extraction state:', data);
-      setState(data);
+      setState(prev => {
+        const newState = {
+          ...prev,
+          current_file: data.current_file,
+          file_progress: data.file_progress,
+          // Ensure the status is in_progress when we get progress updates
+          status: 'in_progress'
+        };
+        console.log('[Socket] Updated progress state:', newState);
+        return newState;
+      });
     };
     
-    const onExtractionProgress = (data: { current_file: string; file_progress: number }) => {
-      if (!isMounted.current) return;
-      
-      console.log('Received progress update:', data);
-      setState(prevState => ({
-        ...prevState,
-        current_file: data.current_file,
-        file_progress: data.file_progress
-      }));
-    };
-    
-    const onMergedData = (data: { merged_data: any }) => {
-      if (!isMounted.current) return;
-      
-      console.log('Received merged data update of size:', JSON.stringify(data).length);
-      
-      if (data && data.merged_data) {
-        setState(prevState => ({
-          ...prevState,
-          merged_data: data.merged_data
-        }));
-        setSimplifiedData(null);
-      } else {
-        console.warn('Received invalid merged data:', data);
-      }
-    };
-    
-    const onSimplifiedMergedData = (data: SimplifiedMergedData) => {
-      if (!isMounted.current) return;
-      
-      console.log('Received simplified merged data notification:', data);
-      setSimplifiedData(data);
-    };
-    
-    const onFileCompleted = (data: { 
+    const handleFileCompleted = (data: { 
       completed_file: string;
       processed_files: number;
       total_files: number;
       next_file: string | null;
     }) => {
       if (!isMounted.current) return;
+      console.log('[Socket] File completed update received:', data);
+      debugStateUpdate('file_completed', data);
       
-      console.log('File completed:', data);
-      setState(prevState => ({
-        ...prevState,
-        processed_files: data.processed_files,
-        current_file: data.next_file || prevState.current_file,
-        file_progress: data.next_file ? 0 : 1
-      }));
+      setState(prev => {
+        const newState = {
+          ...prev,
+          processed_files: data.processed_files,
+          total_files: data.total_files,
+          current_file: data.next_file || prev.current_file,
+          file_progress: data.next_file ? 0 : 1,
+          // Ensure the status is in_progress when files are being processed
+          status: 'in_progress'
+        };
+        console.log('[Socket] Updated file completed state:', newState);
+        return newState;
+      });
     };
     
-    const onExtractionCompleted = (data: {
+    const handleMergedData = (data: { merged_data: any }) => {
+      if (!isMounted.current || !data || !data.merged_data) return;
+      console.log('[Socket] Merged data received, size:', Object.keys(data.merged_data).length);
+      debugStateUpdate('merged_data', { size: Object.keys(data.merged_data).length });
+      
+      setState(prev => {
+        const newState = {
+          ...prev,
+          merged_data: data.merged_data
+        };
+        console.log('[Socket] Updated merged data state');
+        return newState;
+      });
+    };
+    
+    const handleSimplifiedMergedData = (data: SimplifiedMergedData) => {
+      if (!isMounted.current) return;
+      console.log('[Socket] Simplified merged data received:', data);
+      debugStateUpdate('merged_data_simplified', data);
+      
+      setSimplifiedData(data);
+      console.log('[Socket] Updated simplified data state');
+    };
+    
+    const handleExtractionCompleted = (data: {
       success: boolean;
       message: string;
       processed_files: number;
@@ -237,116 +322,267 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, dataset
       duration: number;
     }) => {
       if (!isMounted.current) return;
+      console.log('[Socket] Extraction completed update received:', data);
+      debugStateUpdate('extraction_completed', data);
       
-      console.log('Extraction completed:', data);
-      setState(prevState => ({
-        ...prevState,
-        status: data.success ? 'completed' : 'failed',
-        message: data.message,
-        duration: data.duration
-      }));
+      setState(prev => {
+        const newState = {
+          ...prev,
+          status: data.success ? 'completed' : 'failed',
+          message: data.message,
+          duration: data.duration,
+          processed_files: data.processed_files,
+          total_files: data.total_files
+        };
+        console.log('[Socket] Updated completion state:', newState);
+        return newState;
+      });
       
       if (onComplete) {
         onComplete();
       }
     };
     
-    const onError = (data: { message: string }) => {
+    const handleRoomJoined = (data: { room: string }) => {
       if (!isMounted.current) return;
-      
-      console.error('Socket error:', data);
-      setError(data.message);
-    };
-    
-    const onRoomJoined = (data: { room: string }) => {
-      if (!isMounted.current) return;
-      
-      console.log(`Joined room: ${data.room}`);
+      console.log('[Socket] Room joined event received:', data);
+      debugStateUpdate('room_joined', data);
       
       if (data.room === roomId) {
+        console.log(`[Socket] Joined room: ${data.room}`);
         setConnected(true);
-        setConnecting(false);
+        
+        // Request current state after joining room
+        console.log('[Socket] Requesting current extraction state');
+        socket.current.emit('get_extraction_state', {
+          source,
+          dataset_name: datasetName
+        });
       }
     };
-    
-    socket.on('connect', onConnect);
-    socket.on('connect_error', onConnectError);
-    socket.on('disconnect', onDisconnect);
-    socket.on('extraction_state', onExtractionState);
-    socket.on('extraction_progress', onExtractionProgress);
-    socket.on('merged_data', onMergedData);
-    socket.on('merged_data_simplified', onSimplifiedMergedData);
-    socket.on('file_completed', onFileCompleted);
-    socket.on('extraction_completed', onExtractionCompleted);
-    socket.on('error', onError);
-    socket.on('room_joined', onRoomJoined);
-    
-    return () => {
-      console.log(`Cleaning up socket event listeners for ${roomId}`);
+
+    const handleFileChunksUpdated = (data: { 
+      current_file: string;
+      total_chunks: number;
+    }) => {
+      if (!isMounted.current) return;
+      console.log('[Socket] File chunks updated received:', data);
+      debugStateUpdate('file_chunks_updated', data);
       
-      socket.off('connect', onConnect);
-      socket.off('connect_error', onConnectError);
-      socket.off('disconnect', onDisconnect);
-      socket.off('extraction_state', onExtractionState);
-      socket.off('extraction_progress', onExtractionProgress);
-      socket.off('merged_data', onMergedData);
-      socket.off('merged_data_simplified', onSimplifiedMergedData);
-      socket.off('file_completed', onFileCompleted);
-      socket.off('extraction_completed', onExtractionCompleted);
-      socket.off('error', onError);
-      socket.off('room_joined', onRoomJoined);
+      setState(prev => {
+        const newState = {
+          ...prev,
+          current_file: data.current_file,
+          current_file_chunks: data.total_chunks,
+          current_file_chunk: 0,
+          file_progress: 0
+        };
+        console.log('[Socket] Updated file chunks state:', newState);
+        return newState;
+      });
+    };
+    
+    const handleChunkProgress = (data: {
+      current_chunk: number;
+      current_file_total_chunks: number;
+      file_progress: number;
+      total_processed_chunks: number;
+      overall_total_chunks: number;
+    }) => {
+      if (!isMounted.current) return;
+      console.log('[Socket] Chunk progress update received:', data);
+      debugStateUpdate('chunk_progress', data);
+      
+      setState(prev => {
+        const newState = {
+          ...prev,
+          current_file_chunk: data.current_chunk,
+          current_file_chunks: data.current_file_total_chunks,
+          file_progress: data.file_progress,
+          processed_chunks: data.total_processed_chunks,
+          total_chunks: data.overall_total_chunks
+        };
+        console.log('[Socket] Updated chunk progress state:', newState);
+        return newState;
+      });
+    };
+
+    // Update connection status if socket is already connected
+    if (socket.current.connected) {
+      console.log(`[Socket] Already connected, joining room ${roomId}`);
+      setConnected(true);
+      joinRoom(source, datasetName);
+      
+      // Also fetch current state
+      console.log('[Socket] Fetching current state on initial setup');
+      fetchCurrentState();
+    } else {
+      console.log('[Socket] Not connected yet, waiting for connect event');
+    }
+    
+    // Set up event listeners
+    console.log('[Socket] Setting up socket event listeners');
+    socket.current.on('connect', handleConnect);
+    socket.current.on('disconnect', handleDisconnect);
+    socket.current.on('connect_error', handleError);
+    socket.current.on('error', handleError);
+    socket.current.on('extraction_state', handleExtractionState);
+    socket.current.on('extraction_progress', handleExtractionProgress);
+    socket.current.on('file_completed', handleFileCompleted);
+    socket.current.on('merged_data', handleMergedData);
+    socket.current.on('merged_data_simplified', handleSimplifiedMergedData);
+    socket.current.on('extraction_completed', handleExtractionCompleted);
+    socket.current.on('room_joined', handleRoomJoined);
+    socket.current.on('file_chunks_updated', handleFileChunksUpdated);
+    socket.current.on('chunk_progress', handleChunkProgress);
+
+    // Set up auto-reconnect if we don't receive connection confirmation
+    console.log('[Socket] Setting up auto-reconnect timer');
+    reconnectTimerRef.current = setTimeout(() => {
+      if (!connected && activeSession) {
+        console.log('[Socket] Auto-reconnecting after timeout...');
+        handleManualReconnect();
+      }
+    }, 3000);
+    
+    // Log all registered event listeners to confirm they're set up
+    console.log('[Socket] Registered event listeners:', Object.keys(socket.current._callbacks || {}).join(', '));
+    
+    // Cleanup function
+    return () => {
+      console.log('[Socket] Cleaning up socket connection');
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      
+      if (source && datasetName) {
+        console.log(`[Socket] Leaving room ${roomId} on cleanup`);
+        leaveRoom(source, datasetName);
+      }
+      
+      // Remove all event listeners
+      if (socket.current) {
+        console.log('[Socket] Removing event listeners');
+        socket.current.off('connect', handleConnect);
+        socket.current.off('disconnect', handleDisconnect);
+        socket.current.off('connect_error', handleError);
+        socket.current.off('error', handleError);
+        socket.current.off('extraction_state', handleExtractionState);
+        socket.current.off('extraction_progress', handleExtractionProgress);
+        socket.current.off('file_completed', handleFileCompleted);
+        socket.current.off('merged_data', handleMergedData);
+        socket.current.off('merged_data_simplified', handleSimplifiedMergedData);
+        socket.current.off('extraction_completed', handleExtractionCompleted);
+        socket.current.off('room_joined', handleRoomJoined);
+        socket.current.off('file_chunks_updated', handleFileChunksUpdated);
+        socket.current.off('chunk_progress', handleChunkProgress);
+      }
     };
   }, [source, datasetName, roomId, activeSession, onComplete]);
 
-  useEffect(() => {
-    if (activeSession) {
-      const cleanup = connectToSocket();
-      return () => {
-        if (cleanup) cleanup();
-      };
-    }
-  }, [activeSession, connectToSocket]);
-
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
       isMounted.current = false;
-      console.log(`Component unmounting for ${roomId}`);
       
-      if (source && datasetName && connected) {
-        console.log(`Leaving room ${roomId} on unmount`);
-        leaveRoom(source, datasetName);
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
     };
-  }, [source, datasetName, roomId, connected]);
+  }, []);
 
-  const handleManualReconnect = useCallback(() => {
-    if (!isMounted.current || !activeSession) return;
+  // Direct state check from the server
+  const fetchCurrentState = useCallback(async () => {
+    if (!source || !datasetName) return;
     
-    setError('');
-    setReconnectAttempts(prev => prev + 1);
-    setConnecting(true);
-    console.log('Manually reconnecting socket with force new connection...');
+    console.log(`[API] Fetching current extraction state for ${roomId}`);
     
-    const newSocket = forceNewConnection();
-    
-    setTimeout(() => {
-      if (!isMounted.current) return;
+    try {
+      const response = await fetch(`http://localhost:5000/api/extraction/state?source=${encodeURIComponent(source)}&dataset_name=${encodeURIComponent(datasetName)}`);
+      const data = await response.json();
       
-      if (isSocketConnected()) {
-        console.log('Socket reconnected successfully');
+      if (data.state) {
+        console.log('[API] Received extraction state:', data.state);
+        setState(data.state);
+        
+        // If we got valid state data, we must be connected
         setConnected(true);
-        setConnecting(false);
-        joinRoom(source, datasetName);
+        setReceivedData(true);
+        
+        // Debug: Also emit a get_state message via socket to compare responses
+        if (socket.current && socket.current.connected) {
+          console.log('[Socket] Manually requesting state via socket to verify connection');
+          socket.current.emit('get_extraction_state', {
+            source,
+            dataset_name: datasetName
+          });
+        }
       } else {
-        console.log('Socket failed to reconnect');
-        setError('Failed to reconnect. Please try again.');
-        setConnecting(false);
+        console.log('[API] No extraction state data received');
       }
-    }, 1000);
-  }, [source, datasetName, activeSession]);
+    } catch (error) {
+      console.error('[API] Error fetching extraction state:', error);
+    }
+  }, [source, datasetName, roomId]);
 
   const handleStartCheckingStatus = () => {
     checkExtractionSession();
+  };
+
+  const handleManualReconnect = () => {
+    if (!source || !datasetName) return;
+    
+    console.log('[Socket] Manual reconnect requested');
+    
+    // Try to reconnect using the existing socket
+    if (socket.current) {
+      if (!socket.current.connected) {
+        console.log('[Socket] Socket disconnected, attempting to reconnect');
+        socket.current.connect();
+        
+        // After connect attempt, log connection status
+        setTimeout(() => {
+          console.log('[Socket] Connection status after reconnect attempt:', 
+            socket.current?.connected ? 'Connected' : 'Disconnected');
+        }, 500);
+      } else {
+        console.log('[Socket] Socket already connected');
+      }
+      
+      // Rejoin the room
+      console.log(`[Socket] Rejoining room ${roomId}`);
+      joinRoom(source, datasetName);
+      
+      // Verify current listeners
+      console.log('[Socket] Current event listeners:', 
+        Object.keys(socket.current._callbacks || {}).join(', '));
+      
+      // Check if we're receiving events (don't try to re-add handlers as they're in a closure)
+      if (!socket.current._callbacks || 
+          !socket.current._callbacks['$extraction_state'] || 
+          socket.current._callbacks['$extraction_state'].length === 0) {
+        console.log('[Socket] Missing some event listeners - recommend refreshing the page');
+        setError('Socket connection may be incomplete. Try refreshing the page if updates stop.');
+      }
+    }
+    
+    // Also fetch the current state directly
+    console.log('[Socket] Fetching current state via API');
+    fetchCurrentState();
+    
+    // If we've received data already, update connection status
+    if (receivedData) {
+      console.log('[Socket] Previously received data, updating connection status');
+      setConnected(true);
+    }
+    
+    setError('');
+  };
+
+  const handleToggleDetails = () => {
+    setShowDetails(!showDetails);
   };
 
   const formattedMergedData = state.merged_data && Object.keys(state.merged_data).length > 0
@@ -355,14 +591,11 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, dataset
       ? `Data available (${(simplifiedData.dataSize / 1024).toFixed(2)} KB) with keys: ${simplifiedData.keys.join(', ')}`
       : "No merged data available yet";
   
-  const overallProgress = state.total_files > 0
-    ? ((state.processed_files) / state.total_files * 100)
+  const overallProgress = state.total_chunks > 0
+    ? ((state.processed_chunks) / state.total_chunks * 100)
     : 0;
-  
-  const handleToggleDetails = () => {
-    setShowDetails(!showDetails);
-  };
-  
+
+  // Show status check button if not active session
   if (!activeSession && !checkingStatus) {
     return (
       <Paper elevation={3} sx={{ p: 3, mt: 3, mb: 3 }}>
@@ -388,6 +621,7 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, dataset
     );
   }
   
+  // Show loading indicator while checking
   if (checkingStatus) {
     return (
       <Paper elevation={3} sx={{ p: 3, mt: 3, mb: 3 }}>
@@ -399,40 +633,29 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, dataset
     );
   }
   
+  // Connection and data state indicator
+  const connectionStatus = receivedData 
+    ? { label: "Data Received", color: "success" as const }
+    : connected 
+      ? { label: "Connected", color: "success" as const }
+      : { label: "Disconnected", color: "error" as const, icon: <WifiOffIcon /> };
+
+  // Main progress view
   return (
     <Paper elevation={3} sx={{ p: 3, mt: 3, mb: 3 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
         <Typography variant="h6">
           Extraction Progress
-          {connecting && (
-            <Chip 
-              label="Connecting..." 
-              color="warning" 
-              size="small" 
-              sx={{ ml: 2 }} 
-              icon={<SyncIcon />}
-            />
-          )}
-          {!connected && !connecting && socketInitialized && (
-            <Chip 
-              label="Disconnected" 
-              color="error" 
-              size="small" 
-              sx={{ ml: 2 }} 
-              icon={<WifiOffIcon />}
-            />
-          )}
-          {connected && (
-            <Chip 
-              label="Connected" 
-              color="success" 
-              size="small" 
-              sx={{ ml: 2 }} 
-            />
-          )}
+          <Chip 
+            label={connectionStatus.label}
+            color={connectionStatus.color}
+            size="small" 
+            sx={{ ml: 2 }} 
+            icon={connectionStatus.icon}
+          />
         </Typography>
         <Box>
-          {!connected && !connecting && socketInitialized && (
+          {!connected && (
             <Button
               variant="outlined"
               color="primary"
@@ -453,11 +676,48 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, dataset
       {error && (
         <Alert severity="error" sx={{ mb: 2 }}>
           {error}
-          {reconnectAttempts > 0 && (
-            <Box component="span" ml={1}>
-              (Reconnect attempts: {reconnectAttempts})
-            </Box>
-          )}
+        </Alert>
+      )}
+      
+      {state.status === 'interrupted' && (
+        <Alert severity="warning" sx={{ mb: 2 }}>
+          {state.message || 'The extraction was interrupted due to a server restart.'}
+          <Button 
+            size="small" 
+            color="warning" 
+            sx={{ ml: 2 }} 
+            onClick={async () => {
+              try {
+                const response = await fetch(
+                  `http://localhost:5000/api/clear-extraction-state/${source}/${encodeURIComponent(datasetName)}`,
+                  { method: 'POST' }
+                );
+                if (response.ok) {
+                  checkExtractionSession();
+                  setState({
+                    status: 'idle',
+                    total_files: 0,
+                    processed_files: 0,
+                    current_file: '',
+                    file_progress: 0,
+                    merged_data: {},
+                    files: [],
+                    total_chunks: 0,
+                    processed_chunks: 0,
+                    current_file_chunks: 0,
+                    current_file_chunk: 0
+                  });
+                } else {
+                  setError('Failed to clear extraction state');
+                }
+              } catch (err) {
+                console.error('Error clearing state:', err);
+                setError('Failed to clear extraction state');
+              }
+            }}
+          >
+            Clear State
+          </Button>
         </Alert>
       )}
       
@@ -473,6 +733,7 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, dataset
               {state.status === 'in_progress' && 'Extracting data...'}
               {state.status === 'completed' && 'Extraction completed'}
               {state.status === 'failed' && 'Extraction failed'}
+              {state.status === 'interrupted' && 'Extraction interrupted'}
             </Typography>
           </Box>
         </Box>
@@ -488,7 +749,8 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, dataset
       <Box sx={{ mb: 2 }}>
         <Typography variant="subtitle2">Current file:</Typography>
         <Typography noWrap>
-          {state.current_file || 'None'}
+          {state.current_file || 'None'} 
+          {state.current_file_chunks > 0 && ` (Chunk ${state.current_file_chunk}/${state.current_file_chunks})`}
         </Typography>
       </Box>
       
@@ -501,6 +763,9 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, dataset
           value={state.file_progress * 100} 
           sx={{ height: 10, borderRadius: 5 }}
         />
+        <Typography variant="caption" color="textSecondary">
+          {state.current_file_chunk} of {state.current_file_chunks} chunks processed
+        </Typography>
       </Box>
       
       <Box sx={{ mb: 2 }}>
@@ -512,6 +777,9 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({ source, dataset
           value={overallProgress} 
           sx={{ height: 10, borderRadius: 5 }}
         />
+        <Typography variant="caption" color="textSecondary">
+          {state.processed_chunks} of {state.total_chunks} total chunks processed ({state.processed_files} of {state.total_files} files)
+        </Typography>
       </Box>
       
       <Collapse in={showDetails}>

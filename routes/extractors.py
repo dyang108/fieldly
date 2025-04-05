@@ -467,6 +467,10 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
     
     logger.info(f"Split content into {total_chunks} chunks")
     
+    # Update total chunks for this file if tracking progress
+    if track_progress:
+        extraction_progress.update_file_chunks(source, dataset_name, filename, total_chunks)
+    
     # Process each chunk
     all_chunk_results = []
     merged_data = {}
@@ -476,9 +480,7 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
         
         # Update progress if tracking enabled
         if track_progress:
-            chunk_progress = 0.6 + (0.3 * (i / total_chunks))
-            logger.debug(f"Updating file progress: {source}, {dataset_name}, {filename}, {chunk_progress:.2f}")
-            extraction_progress.update_file_progress(source, dataset_name, filename, chunk_progress)
+            extraction_progress.update_chunk_progress(source, dataset_name, i)
         
         # Create a prompt for this chunk
         prompt = create_extraction_prompt_with_context(chunk, schema, i, len(chunks))
@@ -653,3 +655,29 @@ Return only the merged JSON object, with no additional text or explanation.
 """
     
     return prompt 
+
+@extractors_bp.route('/clear-extraction-state/<source>/<path:dataset_name>', methods=['POST'])
+def clear_extraction_state(source: str, dataset_name: str) -> Tuple[Response, int]:
+    """
+    Clear the extraction state for a dataset
+    
+    Args:
+        source: The source of the dataset
+        dataset_name: The name of the dataset
+        
+    Returns:
+        JSON response with success status
+    """
+    try:
+        logger.info(f"Clearing extraction state for dataset: {dataset_name} (source: {source})")
+        extraction_progress.clear_extraction_state(source, dataset_name)
+        return jsonify({
+            'success': True,
+            'message': f"Extraction state cleared for {dataset_name}"
+        }), 200
+    except Exception as e:
+        logger.error(f"Error clearing extraction state: {str(e)}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500 

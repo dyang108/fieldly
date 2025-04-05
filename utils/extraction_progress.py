@@ -88,7 +88,18 @@ def _load_states_from_disk() -> None:
                 
                 with open(state_file, 'r') as f:
                     state = json.load(f)
+                
+                # If the extraction was in progress when the server stopped,
+                # mark it as interrupted to prevent confusion
+                if state.get('status') == 'in_progress':
+                    state['status'] = 'interrupted'
+                    state['message'] = 'Extraction was interrupted by server restart'
+                    logger.warning(f"Marking extraction {room} as interrupted due to server restart")
                     
+                    # Write the updated state back to disk
+                    with open(state_file, 'w') as f:
+                        json.dump(state, f)
+                
                 with extraction_state_lock:
                     extraction_state[room] = state
                     
@@ -118,7 +129,11 @@ def start_extraction(source: str, dataset_name: str, files: List[str]):
             'file_progress': 0,
             'merged_data': {},
             'files': files,
-            'start_time': time.time()
+            'start_time': time.time(),
+            'total_chunks': 0,  # Total chunks across all files
+            'processed_chunks': 0,  # Total chunks processed so far
+            'current_file_chunks': 0,  # Number of chunks in current file
+            'current_file_chunk': 0  # Current chunk being processed in current file
         }
     
     # Save state to disk for persistence
@@ -132,6 +147,93 @@ def start_extraction(source: str, dataset_name: str, files: List[str]):
             logger.error(f"Error sending extraction state: {str(e)}")
     else:
         logger.warning("SocketIO not initialized, can't emit start_extraction event")
+
+def update_file_chunks(source: str, dataset_name: str, file_name: str, total_chunks: int):
+    """
+    Update the total chunks for a file when starting to process it
+    
+    Args:
+        source: The source of the dataset
+        dataset_name: The name of the dataset
+        file_name: The name of the current file
+        total_chunks: Total number of chunks in this file
+    """
+    room = f"{source}_{dataset_name}"
+    
+    with extraction_state_lock:
+        if room not in extraction_state:
+            # Try to load from disk if not in memory
+            state = _load_state_from_disk(source, dataset_name)
+            if state:
+                extraction_state[room] = state
+            else:
+                logger.warning(f"No extraction state found for {room}")
+                return
+        
+        state = extraction_state[room]
+        state['current_file'] = file_name
+        state['current_file_chunks'] = total_chunks
+        state['total_chunks'] += total_chunks
+        state['current_file_chunk'] = 0
+        state['file_progress'] = 0
+    
+    # Save state to disk for persistence
+    _save_state_to_disk(source, dataset_name)
+    
+    if socketio:
+        try:
+            socketio.emit('file_chunks_updated', {
+                'current_file': file_name,
+                'total_chunks': total_chunks
+            }, room=room)
+            logger.debug(f"Updated file chunks for {room}: {file_name} - {total_chunks} chunks")
+        except Exception as e:
+            logger.error(f"Error sending file chunks update: {str(e)}")
+
+def update_chunk_progress(source: str, dataset_name: str, chunk_index: int):
+    """
+    Update progress when a chunk has been processed
+    
+    Args:
+        source: The source of the dataset
+        dataset_name: The name of the dataset
+        chunk_index: Index of the current chunk (0-based)
+    """
+    room = f"{source}_{dataset_name}"
+    
+    with extraction_state_lock:
+        if room not in extraction_state:
+            # Try to load from disk if not in memory
+            state = _load_state_from_disk(source, dataset_name)
+            if state:
+                extraction_state[room] = state
+            else:
+                logger.warning(f"No extraction state found for {room}")
+                return
+        
+        state = extraction_state[room]
+        state['current_file_chunk'] = chunk_index + 1
+        state['processed_chunks'] += 1
+        
+        # Calculate progress based on chunks
+        if state['current_file_chunks'] > 0:
+            state['file_progress'] = state['current_file_chunk'] / state['current_file_chunks']
+    
+    # Save state to disk for persistence
+    _save_state_to_disk(source, dataset_name)
+    
+    if socketio:
+        try:
+            socketio.emit('chunk_progress', {
+                'current_chunk': chunk_index + 1,
+                'current_file_total_chunks': state['current_file_chunks'],
+                'file_progress': state['file_progress'],
+                'total_processed_chunks': state['processed_chunks'],
+                'overall_total_chunks': state['total_chunks']
+            }, room=room)
+            logger.debug(f"Updated chunk progress for {room}: chunk {chunk_index + 1}/{state['current_file_chunks']}")
+        except Exception as e:
+            logger.error(f"Error sending chunk progress: {str(e)}")
 
 def update_file_progress(source: str, dataset_name: str, file_name: str, progress: float):
     """
