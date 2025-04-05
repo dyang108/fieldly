@@ -83,6 +83,127 @@ class LLMExtractor(DataExtractor):
         logger.error("Failed to extract valid JSON from model response")
         return {}
     
+    def extract_data_with_context(self, prompt: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract structured data from content with contextual information
+        
+        Args:
+            prompt: Prompt for the model that includes instructions for contextual information
+            schema: JSON schema defining the structure of the data to extract
+            
+        Returns:
+            Extracted data as a dictionary matching the schema, with metadata
+        """
+        # Send the prompt to the appropriate model
+        if self.use_api:
+            response_text = self._call_cloud_api(prompt)
+        else:
+            response_text = self._call_local_api(prompt)
+        
+        logger.debug(f"Context response text: {response_text}")
+        
+        # Parse the response
+        if response_text:
+            # First, try to parse the full response with metadata
+            try:
+                # Check if the response is wrapped in triple backticks
+                if response_text.strip().startswith('```'):
+                    # Extract the JSON content between the backticks
+                    json_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', response_text)
+                    if json_match:
+                        json_str = json_match.group(1)
+                        # Clean up common formatting issues
+                        json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
+                        json_str = re.sub(r',\s*]', ']', json_str)  # Remove trailing commas in arrays
+                        json_str = re.sub(r'\s+', ' ', json_str)    # Normalize whitespace
+                        data = json.loads(json_str)
+                    else:
+                        # If we can't extract JSON between backticks, try to parse the whole response
+                        data = json.loads(response_text)
+                else:
+                    # If not wrapped in backticks, try to parse directly
+                    data = json.loads(response_text)
+                
+                # Check if the response has the expected structure with data and metadata
+                if isinstance(data, dict) and 'data' in data and 'metadata' in data:
+                    # Filter the extracted data to match the schema
+                    filtered_data = self.filter_data_by_schema(data['data'], schema)
+                    
+                    # Add the metadata to the filtered data
+                    result = {
+                        'data': filtered_data,
+                        'metadata': data['metadata']
+                    }
+                    
+                    return result
+                # Check for the old format with extracted_data instead of data
+                elif isinstance(data, dict) and 'extracted_data' in data and 'metadata' in data:
+                    # Filter the extracted data to match the schema
+                    filtered_data = self.filter_data_by_schema(data['extracted_data'], schema)
+                    
+                    # Add the metadata to the filtered data
+                    result = {
+                        'data': filtered_data,
+                        'metadata': data['metadata']
+                    }
+                    
+                    return result
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse JSON response: {str(e)}")
+                # If direct parsing fails, try to find JSON in the response
+                try:
+                    # Look for JSON-like content between triple backticks
+                    json_match = re.search(r'```(?:json)?\s*(\{[\s\S]*?\})\s*```', response_text)
+                    if json_match:
+                        json_str = json_match.group(1)
+                        # Clean up common formatting issues
+                        json_str = re.sub(r',\s*}', '}', json_str)  # Remove trailing commas
+                        json_str = re.sub(r',\s*]', ']', json_str)  # Remove trailing commas in arrays
+                        json_str = re.sub(r'\s+', ' ', json_str)    # Normalize whitespace
+                        data = json.loads(json_str)
+                        
+                        # Check if the response has the expected structure with data and metadata
+                        if isinstance(data, dict) and 'data' in data and 'metadata' in data:
+                            # Filter the extracted data to match the schema
+                            filtered_data = self.filter_data_by_schema(data['data'], schema)
+                            
+                            # Add the metadata to the filtered data
+                            result = {
+                                'data': filtered_data,
+                                'metadata': data['metadata']
+                            }
+                            
+                            return result
+                        # Check for the old format with extracted_data instead of data
+                        elif isinstance(data, dict) and 'extracted_data' in data and 'metadata' in data:
+                            # Filter the extracted data to match the schema
+                            filtered_data = self.filter_data_by_schema(data['extracted_data'], schema)
+                            
+                            # Add the metadata to the filtered data
+                            result = {
+                                'data': filtered_data,
+                                'metadata': data['metadata']
+                            }
+                            
+                            return result
+                except json.JSONDecodeError:
+                    pass
+            
+            # If we couldn't parse the response with metadata, fall back to the standard extraction
+            logger.warning("Failed to parse response with metadata, falling back to standard extraction")
+            extracted_data = self.clean_json_response(response_text, schema)
+            if extracted_data:
+                return {
+                    'data': extracted_data,
+                    'metadata': {}  # Empty metadata
+                }
+        
+        logger.error("Failed to extract valid JSON from model response with context")
+        return {
+            'data': {},
+            'metadata': {}
+        }
+    
     def _call_local_api(self, prompt: str) -> Optional[str]:
         """
         Call the local API with the prompt
@@ -209,4 +330,32 @@ class LLMExtractor(DataExtractor):
             return None
         except Exception as e:
             logger.error(f"Unexpected error in {self.provider} API call: {str(e)}")
-            return None 
+            return None
+    
+    def merge_results(self, prompt: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Merge multiple extraction results using the LLM
+        
+        Args:
+            prompt: Prompt for the LLM to merge the results
+            schema: Schema defining the structure of the data
+            
+        Returns:
+            Merged data as a dictionary matching the schema
+        """
+        # Send the prompt to the appropriate model
+        if self.use_api:
+            response_text = self._call_cloud_api(prompt)
+        else:
+            response_text = self._call_local_api(prompt)
+        
+        logger.debug(f"Merge response text: {response_text}")
+        
+        # Parse the response
+        if response_text:
+            merged_data = self.clean_json_response(response_text, schema)
+            if merged_data:
+                return merged_data
+        
+        logger.error("Failed to extract valid JSON from model merge response")
+        return {} 

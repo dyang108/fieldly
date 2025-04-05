@@ -208,9 +208,38 @@ def process_file(storage: Storage, dataset_name: str, output_dir: str,
             else:
                 logger.info("Using existing Markdown file")
             
+            # Get AI configuration from environment variables
+            provider = os.environ.get('LLM_PROVIDER', DEFAULT_LLM_PROVIDER)
+            use_api = os.environ.get('USE_API', 'false').lower() == 'true'
+            
+            # Configure the extractor
+            extractor_config = {
+                'use_api': use_api,
+                'provider': provider
+            }
+            
+            if use_api:
+                # API keys for different providers
+                if provider == 'deepseek':
+                    extractor_config['api_key'] = current_app.config.get('DEEPSEEK_API_KEY')
+                    extractor_config['api_url'] = current_app.config.get('DEEPSEEK_API_URL')
+                elif provider == 'openai':
+                    extractor_config['api_key'] = current_app.config.get('OPENAI_API_KEY')
+                    extractor_config['api_url'] = current_app.config.get('OPENAI_API_URL')
+                elif provider == 'anthropic':
+                    extractor_config['api_key'] = current_app.config.get('ANTHROPIC_API_KEY')
+                    extractor_config['api_url'] = current_app.config.get('ANTHROPIC_API_URL')
+            else:
+                # Local model configuration
+                extractor_config['model'] = current_app.config.get(f'{provider.upper()}_LOCAL_MODEL')
+                extractor_config['api_url'] = current_app.config.get(f'{provider.upper()}_LOCAL_API_URL')
+            
+            # Initialize the extractor using the factory function
+            extractor = create_llm_extractor(**extractor_config)
+            
             # 2. Extract data from Markdown based on schema
             logger.info(f"Starting data extraction from Markdown using schema")
-            extracted_data = extract_data_from_markdown(str(md_path), schema)
+            extracted_data = extract_data_from_markdown(md_path, schema, extractor)
             
             # 3. Save extracted data as JSON
             logger.info(f"Saving extracted data to: {json_path}")
@@ -368,66 +397,169 @@ def print_accumulated_data(data: Dict[str, Any], schema: Dict[str, Any], indent:
     # Print formatted JSON
     logger.info(json.dumps(filtered_data, indent=2))
 
-def extract_data_from_markdown(md_path: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extractor: DataExtractor) -> Dict[str, Any]:
     """
-    Extract structured data from a markdown file according to a schema
+    Extract structured data from a markdown file using the provided extractor
     
     Args:
-        md_path: Path to the markdown file
-        schema: JSON schema defining the structure of the data to extract
+        markdown_file: Path to the markdown file
+        schema: JSON schema defining the structure of the data
+        extractor: DataExtractor instance to use for extraction
         
     Returns:
-        Extracted data as a dictionary matching the schema
+        Extracted data as a dictionary
     """
     # Read the markdown file
-    with open(md_path, 'r', encoding='utf-8') as f:
+    with open(markdown_file, 'r', encoding='utf-8') as f:
         content = f.read()
     
-    # Split content into chunks
+    # Split the content into chunks
     chunks = split_content_into_chunks(content)
-    logger.info(f"Split content into {len(chunks)} chunks")
     
-    # Get AI configuration from environment variables
-    provider = os.environ.get('LLM_PROVIDER', DEFAULT_LLM_PROVIDER)
-    use_api = os.environ.get('USE_API', 'false').lower() == 'true'
-    
-    # Configure the extractor
-    extractor_config = {
-        'use_api': use_api,
-        'provider': provider
-    }
-    
-    if use_api:
-        # API keys for different providers
-        if provider == 'deepseek':
-            extractor_config['api_key'] = current_app.config.get('DEEPSEEK_API_KEY')
-            extractor_config['api_url'] = current_app.config.get('DEEPSEEK_API_URL')
-        elif provider == 'openai':
-            extractor_config['api_key'] = current_app.config.get('OPENAI_API_KEY')
-            extractor_config['api_url'] = current_app.config.get('OPENAI_API_URL')
-        elif provider == 'anthropic':
-            extractor_config['api_key'] = current_app.config.get('ANTHROPIC_API_KEY')
-            extractor_config['api_url'] = current_app.config.get('ANTHROPIC_API_URL')
-    else:
-        # Local model configuration
-        extractor_config['model'] = current_app.config.get(f'{provider.upper()}_LOCAL_MODEL')
-        extractor_config['api_url'] = current_app.config.get(f'{provider.upper()}_LOCAL_API_URL')
-    
-    # Initialize the extractor using the factory function
-    extractor = create_llm_extractor(**extractor_config)
-    
-    # Process each chunk and accumulate data
-    accumulated_data = {}
-    for i, chunk in enumerate(chunks, 1):
-        logger.info(f"Processing chunk {i}/{len(chunks)}")
+    # Process each chunk
+    all_chunk_results = []
+    for i, chunk in enumerate(chunks):
+        # Create a prompt for this chunk
+        prompt = create_extraction_prompt_with_context(chunk, schema, i, len(chunks))
         
         # Extract data from the chunk
-        chunk_data = extractor.extract_data(chunk, schema)
-        logger.info(f"Extracted data from chunk {i}: {json.dumps(chunk_data, indent=2)}")
+        chunk_data = extractor.extract_data_with_context(prompt, schema)
         
-        # Merge the chunk data into accumulated data
-        accumulated_data = merge_chunk_data(accumulated_data, chunk_data)
-        logger.info(f"Accumulated data after chunk {i}: {json.dumps(accumulated_data, indent=2)}")
+        # Add the chunk index to the result
+        all_chunk_results.append({
+            'chunk_index': i,
+            'data': chunk_data
+        })
     
-    logger.info(f"Final extracted data: {json.dumps(accumulated_data, indent=2)}")
-    return accumulated_data 
+    # If there's only one chunk, return its data
+    if len(all_chunk_results) == 1:
+        return all_chunk_results[0]['data'].get('data', {})
+    
+    # Create a prompt for merging the results
+    merge_prompt = create_merge_prompt(all_chunk_results, schema)
+    
+    # Get the merged result from the LLM
+    merged_data = extractor.merge_results(merge_prompt, schema)
+    
+    return merged_data
+
+def create_extraction_prompt_with_context(content: str, schema: Dict[str, Any], chunk_index: int, total_chunks: int) -> str:
+    """
+    Create a prompt for extracting data with contextual information
+    
+    Args:
+        content: The content to extract data from
+        schema: JSON schema defining the structure of the data
+        chunk_index: Index of the current chunk (0-based)
+        total_chunks: Total number of chunks
+        
+    Returns:
+        A prompt for the LLM to extract data with context
+    """
+    # Convert schema to a string representation
+    schema_str = json.dumps(schema, indent=2)
+    
+    # Create the prompt
+    prompt = f"""
+You are an expert at extracting structured data from documents. I have a chunk of a document (chunk {chunk_index + 1} of {total_chunks}), and I need you to extract data from it in order
+to populate a set of fields defined in a schema.
+
+The data should all be relevant to the data in this schema:
+{schema_str}
+
+Here is the chunk of the document:
+{content}
+
+Please extract the data from this chunk and provide it in a JSON object. For each field you extract, also provide metadata about the extraction:
+
+1. page_number: The page number where this information was found (if available)
+2. prominence: How prominent this information is in the document (e.g., "header", "title", "main text", "footnote")
+3. format: The format of the information (e.g., "table", "paragraph", "list", "heading")
+4. confidence: Your confidence in the relevance of the extraction to filling in the schema {schema_str} (0.0 to 1.0)
+
+Return your response in this format:
+{{
+  "data": {{
+    // The extracted data according to the schema
+  }},
+  "metadata": {{
+    // For each field in the data, provide metadata
+    "field_name": {{
+      "page_number": 1,
+      "prominence": "header",
+      "format": "table",
+      "confidence": 0.53
+    }}
+  }}
+}}
+
+Again, the data you output should all be relevant to the data in this schema:
+{schema_str}
+
+Return only the JSON object, with no additional text or explanation.
+"""
+    
+    return prompt
+
+def create_merge_prompt(chunk_results: List[Dict[str, Any]], schema: Dict[str, Any]) -> str:
+    """
+    Create a prompt for the LLM to merge multiple chunk results
+    
+    Args:
+        chunk_results: List of chunk results with their indices and metadata
+        schema: JSON schema defining the structure of the data
+        
+    Returns:
+        A prompt for the LLM to merge the results
+    """
+    # Convert schema to a string representation
+    schema_str = json.dumps(schema, indent=2)
+    
+    # Create a string representation of all chunk results
+    chunk_results_str = ""
+    for result in chunk_results:
+        chunk_index = result['chunk_index']
+        chunk_data = result['data']
+        
+        # Format the data and metadata
+        data_str = json.dumps(chunk_data.get('data', {}), indent=2)
+        metadata_str = json.dumps(chunk_data.get('metadata', {}), indent=2)
+        
+        chunk_results_str += f"Chunk {chunk_index}:\n"
+        chunk_results_str += f"Data:\n{data_str}\n\n"
+        chunk_results_str += f"Metadata:\n{metadata_str}\n\n"
+    
+    # Create the prompt
+    prompt = f"""
+You are an expert at extracting structured data from documents. I have extracted data from different chunks of a document, and I need you to merge these results into a single, coherent JSON object.
+
+The data should conform to this schema:
+{schema_str}
+
+Here are the extracted data from different chunks of the document, along with metadata about each field:
+{chunk_results_str}
+
+Please merge these results into a single JSON object that best represents the document. Consider the following:
+
+1. For basic fields (like title, date, company name), prefer values from earlier chunks (especially the first chunk) as these typically appear at the beginning of documents.
+
+2. For lists of items (like time periods), combine all unique items from all chunks.
+
+3. For nested objects, merge them intelligently, taking the most complete information.
+
+4. If there are conflicting values, use your judgment to determine which is most likely correct based on context.
+
+5. For financial data, ensure consistency across time periods.
+
+6. Pay special attention to the metadata for each field:
+   - Prefer values with higher confidence levels
+   - Consider the prominence of the information in the document
+   - Take into account the format of the information (e.g., tables are often more reliable for structured data)
+   - Use page numbers to understand the document structure
+
+7. For fields that appear in multiple chunks with different values, use the metadata to determine which value is most likely correct.
+
+Return only the merged JSON object, with no additional text or explanation.
+"""
+    
+    return prompt 

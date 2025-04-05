@@ -123,7 +123,7 @@ class Config:
         # Default settings
         self.DEFAULT_TEMPERATURE: float = 0.3
         self.DEFAULT_MAX_TOKENS: int = 4000
-        self.MAX_CHUNK_SIZE: int = 32000
+        self.MAX_CHUNK_SIZE: int = 8000
         self.MIN_CHUNK_SIZE: int = 100
 
 # Create a singleton instance

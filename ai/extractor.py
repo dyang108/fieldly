@@ -23,6 +23,22 @@ class DataExtractor(ABC):
         """
         pass
     
+    def extract_data_with_context(self, prompt: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Extract structured data from content with contextual information
+        
+        Args:
+            prompt: Prompt for the model that includes instructions for contextual information
+            schema: JSON schema defining the structure of the data to extract
+            
+        Returns:
+            Extracted data as a dictionary matching the schema, with metadata
+        """
+        # This is a default implementation that should be overridden by subclasses
+        # The actual implementation will be in LLMExtractor
+        logger.warning("extract_data_with_context called on base DataExtractor class, which does not implement it")
+        return {}
+    
     def create_extraction_prompt(self, content: str, schema: Dict[str, Any]) -> str:
         """
         Create a prompt for data extraction
@@ -180,4 +196,20 @@ Response:"""
                 return None
         
         # Filter the data to match the schema structure
-        return self.filter_data_by_schema(data, schema) 
+        return self.filter_data_by_schema(data, schema)
+        
+    def merge_results(self, prompt: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Merge multiple extraction results using the LLM
+        
+        Args:
+            prompt: Prompt for the LLM to merge the results
+            schema: Schema defining the structure of the data
+            
+        Returns:
+            Merged data as a dictionary matching the schema
+        """
+        # This is a default implementation that should be overridden by subclasses
+        # The actual implementation will be in LLMExtractor
+        logger.warning("merge_results called on base DataExtractor class, which does not implement it")
+        return {} 
