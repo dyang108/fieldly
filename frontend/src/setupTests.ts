@@ -1,80 +1,55 @@
 // jest-dom adds custom jest matchers for asserting on DOM nodes.
-// Import this file to enable DOM testing utilities
+// allows you to do things like:
+// expect(element).toHaveTextContent(/react/i)
+// Learn more: https://github.com/testing-library/jest-dom
 import '@testing-library/jest-dom';
-import { expect, jest } from '@jest/globals';
+import { jest } from '@jest/globals';
 
-// Add custom matchers to Jest's expect
-declare global {
-  namespace jest {
-    interface Matchers<R> {
-      toBeInTheDocument(): R;
-      toHaveAttribute(attr: string, value?: string): R;
+// TextEncoder/TextDecoder polyfill
+class TextEncoderPolyfill {
+  encode(text: string): Uint8Array {
+    const encoded = new Uint8Array(text.length);
+    for (let i = 0; i < text.length; i++) {
+      encoded[i] = text.charCodeAt(i);
     }
+    return encoded;
   }
 }
 
-// Mock the TextEncoder/TextDecoder which are not available in JSDOM
-if (typeof TextEncoder === 'undefined') {
-  class MockTextEncoder {
-    encoding = 'utf-8';
-    encode(text: string): Uint8Array {
-      const arr = new Uint8Array(text.length);
-      for (let i = 0; i < text.length; i++) {
-        arr[i] = text.charCodeAt(i);
-      }
-      return arr;
-    }
-    encodeInto(text: string, dest: Uint8Array): { read: number; written: number } {
-      const encoded = this.encode(text);
-      const length = Math.min(dest.length, encoded.length);
-      dest.set(encoded.subarray(0, length));
-      return { read: length, written: length };
-    }
+class TextDecoderPolyfill {
+  decode(bytes: Uint8Array): string {
+    return String.fromCharCode.apply(null, Array.from(bytes));
   }
-  global.TextEncoder = MockTextEncoder as any;
 }
 
-if (typeof TextDecoder === 'undefined') {
-  class MockTextDecoder {
-    encoding = 'utf-8';
-    fatal = false;
-    ignoreBOM = false;
-    
-    constructor(_utfLabel = 'utf-8', _options = {}) {
-      // Constructor implementation
-    }
-    
-    decode(arr?: Uint8Array): string {
-      if (!arr) return '';
-      return String.fromCharCode.apply(null, Array.from(arr));
-    }
-  }
-  global.TextDecoder = MockTextDecoder as any;
-}
+global.TextEncoder = TextEncoderPolyfill as unknown as typeof global.TextEncoder;
+global.TextDecoder = TextDecoderPolyfill as unknown as typeof global.TextDecoder;
 
 // Mock the Intersection Observer which is not available in JSDOM
-class MockIntersectionObserver {
+global.IntersectionObserver = class IntersectionObserver {
+  constructor(private callback: IntersectionObserverCallback) {}
   observe = jest.fn();
-  disconnect = jest.fn();
   unobserve = jest.fn();
-}
+  disconnect = jest.fn();
+  root = null;
+  rootMargin = '';
+  thresholds = [1];
+  takeRecords = jest.fn(() => []);
+};
 
-Object.defineProperty(window, 'IntersectionObserver', {
+// Mock window.matchMedia
+Object.defineProperty(window, 'matchMedia', {
   writable: true,
-  configurable: true,
-  value: MockIntersectionObserver,
-});
-
-// Mock matchMedia
-window.matchMedia = window.matchMedia || function() {
-  return {
-    matches: false,
-    media: '',
-    onchange: null,
-    addListener: function() {},
-    removeListener: function() {},
-    addEventListener: function() {},
-    removeEventListener: function() {},
-    dispatchEvent: function() {},
-  };
-} as any; 
+  value: jest.fn().mockImplementation(function mockMatchMedia(query: string) {
+    return {
+      matches: false,
+      media: query,
+      onchange: null,
+      addListener: jest.fn(),
+      removeListener: jest.fn(),
+      addEventListener: jest.fn(),
+      removeEventListener: jest.fn(),
+      dispatchEvent: jest.fn(),
+    };
+  }),
+}); 

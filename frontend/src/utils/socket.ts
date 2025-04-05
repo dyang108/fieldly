@@ -1,12 +1,11 @@
 import { io, Socket } from 'socket.io-client';
 import axios from 'axios';
 
-// SocketIO singleton to prevent multiple connections
+// Store socket instance
 let socket: Socket | null = null;
-let isInitialized = false;
 
 // Store connected rooms for reference
-const connectedRooms: string[] = [];
+let connectedRooms: string[] = [];
 
 // Track reconnection attempts
 let reconnectAttempts = 0;
@@ -48,8 +47,6 @@ export const getSocket = (): Socket => {
           console.log(`Rejoined room: ${room}`);
         });
       }
-      
-      isInitialized = true;
     });
     
     socket.on('disconnect', (reason) => {
@@ -152,7 +149,6 @@ export const closeSocket = (): void => {
     // Disconnect the socket
     socket.disconnect();
     socket = null;
-    isInitialized = false;
     reconnectAttempts = 0;
   }
 };
@@ -176,7 +172,6 @@ export const forceNewConnection = (): Socket => {
     console.log('Forcing new socket connection...');
     socket.disconnect();
     socket = null;
-    isInitialized = false;
     reconnectAttempts = 0;
   }
   return getSocket();

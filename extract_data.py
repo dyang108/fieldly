@@ -24,6 +24,7 @@ from flask import Flask
 from db import init_db, db, Schema, DatasetSchemaMapping
 from storage import create_storage
 from routes.extractors import process_file
+from routes import register_blueprints
 from constants import MODEL_CONFIGS, DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_API_PATH, DEFAULT_DATABASE_NAME
 
 # Configure logging
@@ -60,6 +61,9 @@ def create_app():
         # Database configuration
         DATABASE_URL=f"sqlite:///{DEFAULT_DATABASE_NAME}"
     )
+    
+    # Register all blueprints
+    register_blueprints(app)
     
     return app
 

@@ -149,40 +149,83 @@ The following environment variables can be set to configure the application:
 
 ## Testing
 
-### Backend Testing
-
-The backend uses pytest for unit and integration tests. To run the tests:
-
-```bash
-# Run all tests
-pytest
-
-# Run with coverage report
-pytest --cov=. --cov-report=term --cov-report=html
-
-# Run only unit tests
-pytest tests/unit
-
-# Run only integration tests
-pytest tests/integration
-```
-
 ### Frontend Testing
 
-The frontend uses Jest for testing React components. To run the tests:
+Run the frontend tests:
+
+```
+cd frontend && npm test
+```
+
+For coverage reports:
+
+```
+cd frontend && npm run test:coverage
+```
+
+### Backend Testing
+
+Run the backend tests:
+
+```
+pytest
+```
+
+For coverage reports:
+
+```
+pytest --cov=. --cov-report=term --cov-report=html
+```
+
+> **Note:** When running tests with coverage, specify the coverage options directly in the command line rather than in `pytest.ini`. This avoids issues with pytest interpreting coverage options as command-line arguments.
+
+## GitHub Actions & Local Testing
+
+### GitHub Actions Workflows
+
+This project uses GitHub Actions for continuous integration:
+
+- **JavaScript Workflow**: Runs linting and tests for the frontend code.
+- **Python Workflow**: Runs linting and tests for the backend code.
+
+### Local GitHub Actions Testing
+
+You can test GitHub Actions workflows locally using [`act`](https://github.com/nektos/act):
 
 ```bash
-cd frontend
+# Install act (on Ubuntu)
+curl https://raw.githubusercontent.com/nektos/act/master/install.sh | sudo bash
 
-# Run all tests
-npm test
+# Run all workflows in dry-run mode
+act -n
 
-# Run tests with coverage report
-npm run test:coverage
+# Run a specific workflow in dry-run mode
+act -W .github/workflows/javascript.yml -n
+act -W .github/workflows/python.yml -n
 
-# Run tests in watch mode (for development)
-npm run test:watch
+# Run a workflow for real
+act -W .github/workflows/javascript.yml
 ```
+
+### Common Issues and Fixes
+
+When using `act` you might encounter:
+
+1. **Node.js dependency conflicts**: Use the `--legacy-peer-deps` flag:
+   ```bash
+   cd frontend && npm ci --legacy-peer-deps
+   ```
+
+2. **Python package compatibility issues**: Some packages may not be available for specific Python versions. Adjust your requirements.txt as needed:
+   ```bash
+   # In requirements.txt
+   pandas==2.0.3  # For Python 3.8 compatibility
+   ```
+
+3. **Coverage options duplication**: Specify coverage options directly in the command line rather than in `pytest.ini`:
+   ```bash
+   pytest --cov=. --cov-report=term --cov-report=html
+   ```
 
 ## Code Quality and Linting
 

@@ -681,3 +681,20 @@ def clear_extraction_state(source: str, dataset_name: str) -> Tuple[Response, in
             'success': False,
             'error': str(e)
         }), 500 
+
+@extractors_bp.route('/extract/status/<source>/<path:dataset_name>', methods=['GET'])
+def get_extraction_status(source: str, dataset_name: str) -> Tuple[Response, int]:
+    """Get the status of an extraction job."""
+    status = extraction_progress.get_extraction_status(source, dataset_name)
+    if status:
+        return jsonify(status), 200
+    return jsonify({'error': 'No extraction status found'}), 404
+
+
+@extractors_bp.route('/extract/state/<source>/<path:dataset_name>', methods=['GET'])
+def get_extraction_state(source: str, dataset_name: str) -> Tuple[Response, int]:
+    """Get the current state of an extraction job."""
+    state = extraction_progress.get_extraction_state(source, dataset_name)
+    if state:
+        return jsonify(state), 200
+    return jsonify({'error': 'No extraction state found'}), 404 

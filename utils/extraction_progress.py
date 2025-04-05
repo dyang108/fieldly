@@ -515,4 +515,20 @@ def is_extraction_active(source: str, dataset_name: str) -> bool:
         return False
         
     # An extraction is considered active if it's in progress
-    return state.get('status') == 'in_progress' 
+    return state.get('status') == 'in_progress'
+
+def get_extraction_status(source: str, dataset_name: str) -> Optional[str]:
+    """
+    Get the status of an extraction job.
+    
+    Args:
+        source: The source of the dataset
+        dataset_name: The name of the dataset
+        
+    Returns:
+        Optional[str]: The status of the extraction job, or None if not found
+    """
+    state = get_extraction_state(source, dataset_name)
+    if state is None:
+        return None
+    return state.get('status') 
