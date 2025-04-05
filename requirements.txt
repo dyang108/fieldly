@@ -9,7 +9,7 @@ pypdf==5.4.0
 pymupdf4llm==0.0.19
 flask-socketio==5.3.6
 eventlet==0.38.0
-pandas==2.2.0
+pandas==2.0.3
 
 # Testing and linting
 pytest==7.4.3

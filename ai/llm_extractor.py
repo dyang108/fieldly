@@ -6,6 +6,7 @@ import os
 import requests
 from .extractor import DataExtractor
 from constants import DEFAULT_LLM_PROVIDER, PROVIDER_CONFIGS, DEFAULT_TEMPERATURE
+from utils.json_utils import extract_json_from_text
 
 logger = logging.getLogger(__name__)
 

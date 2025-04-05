@@ -3,6 +3,7 @@ from typing import Dict, Any, List, Optional, Union
 import json
 import re
 import logging
+from utils.json_utils import extract_json_from_text
 
 logger = logging.getLogger(__name__)
 
