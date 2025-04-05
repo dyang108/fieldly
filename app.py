@@ -9,7 +9,7 @@ if not getattr(eventlet, 'already_patched', False):
 import os
 import logging
 from typing import Optional, Dict, Any, Union, List, cast
-from flask import Flask, request, jsonify, send_from_directory, Response
+from flask import Flask, request, jsonify, send_from_directory, Response, send_file
 from flask_socketio import SocketIO, emit, disconnect, join_room, leave_room, rooms, close_room
 from flask_cors import CORS
 import collections
@@ -29,6 +29,7 @@ from utils import extraction_progress
 from utils.s3_utils import list_s3_buckets, list_s3_objects
 from utils.schema_generator import generate_schema_from_file, merge_schemas
 from utils.file_utils import get_file_type, is_supported_file_type, list_files_with_extensions
+from storage import create_storage
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
@@ -349,6 +350,109 @@ def get_extraction_state():
         'state': state,
         'is_active': extraction_progress.is_extraction_active(source, dataset_name)
     })
+
+# New endpoint to preview a file from a dataset
+@app.route('/api/preview-file/<source>/<path:dataset_name>/<path:filename>', methods=['GET'])
+def preview_file(source, dataset_name, filename):
+    """Preview a file from a dataset - especially useful for PDFs"""
+    try:
+        logger.info(f"Preview file request for {source}/{dataset_name}/{filename}")
+        
+        # Get storage configuration
+        storage_config = {}
+        
+        if source == 's3':
+            storage_config = {
+                'bucket_name': app.config.get('S3_BUCKET_NAME'),
+                'aws_access_key_id': app.config.get('AWS_ACCESS_KEY_ID'),
+                'aws_secret_access_key': app.config.get('AWS_SECRET_ACCESS_KEY'),
+                'region_name': app.config.get('AWS_REGION')
+            }
+        else:
+            storage_config = {
+                'storage_path': app.config.get('LOCAL_STORAGE_PATH', '.data')
+            }
+        
+        # Create storage instance
+        storage = create_storage(source, storage_config)
+        
+        # Get file path
+        if source == 'local':
+            # For local files, build the path and serve directly
+            file_path = os.path.join(app.config.get('LOCAL_STORAGE_PATH', '.data'), dataset_name, filename)
+            logger.info(f"Serving local file: {file_path}")
+            
+            if not os.path.exists(file_path):
+                return jsonify({'error': 'File not found'}), 404
+                
+            # Determine content type
+            content_type = 'application/pdf' if filename.lower().endswith('.pdf') else None
+            
+            return send_file(file_path, mimetype=content_type)
+        else:
+            # For S3, download to temp file and serve
+            temp_dir = Path('.temp')
+            temp_dir.mkdir(exist_ok=True)
+            
+            temp_file = temp_dir / filename
+            
+            # Download file from S3
+            storage.download_file(f"{dataset_name}/{filename}", str(temp_file))
+            
+            logger.info(f"Serving S3 file via temp: {temp_file}")
+            
+            if not temp_file.exists():
+                return jsonify({'error': 'Failed to download file'}), 500
+                
+            # Determine content type
+            content_type = 'application/pdf' if filename.lower().endswith('.pdf') else None
+            
+            return send_file(str(temp_file), mimetype=content_type)
+            
+    except Exception as e:
+        logger.error(f"Error previewing file: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+# New endpoint to fetch the content of an extracted JSON file
+@app.route('/api/file-content', methods=['GET'])
+def get_file_content():
+    """Get the content of a file, particularly JSON files containing extraction results"""
+    try:
+        file_path = request.args.get('path')
+        
+        if not file_path:
+            return jsonify({'error': 'Missing path parameter'}), 400
+            
+        logger.info(f"Fetching content for file: {file_path}")
+        
+        if not os.path.exists(file_path):
+            return jsonify({'error': 'File not found'}), 404
+            
+        # For JSON files, read and return the content
+        if file_path.lower().endswith('.json'):
+            with open(file_path, 'r') as f:
+                content = json.load(f)
+                
+            return jsonify({
+                'path': file_path,
+                'content': content,
+                'type': 'json'
+            })
+        else:
+            # For other file types, return a small excerpt
+            with open(file_path, 'r') as f:
+                content = f.read(1024)  # First 1KB
+                
+            return jsonify({
+                'path': file_path,
+                'content': content,
+                'type': 'text',
+                'truncated': True
+            })
+            
+    except Exception as e:
+        logger.error(f"Error fetching file content: {str(e)}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     # Use eventlet's WSGI server when running directly

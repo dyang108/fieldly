@@ -22,14 +22,32 @@ import {
   Snackbar,
   IconButton,
   Breadcrumbs,
-  Tooltip
+  Tooltip,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Collapse,
+  Dialog,
+  DialogContent,
+  DialogTitle,
+  DialogActions
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
   Refresh as RefreshIcon,
   InsertDriveFile as FileIcon,
   Link as LinkIcon,
-  Delete as DeleteIcon
+  Delete as DeleteIcon,
+  CheckCircle as CheckCircleIcon,
+  Error as ErrorIcon,
+  ExpandMore as ExpandMoreIcon,
+  ExpandLess as ExpandLessIcon,
+  Visibility as VisibilityIcon,
+  Code as CodeIcon,
+  PictureAsPdf as PdfIcon
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useParams, useNavigate, Link } from 'react-router-dom';
@@ -53,16 +71,19 @@ interface FileListItem {
   last_modified?: string;
 }
 
+interface FileProcessingResult {
+  filename: string;
+  status: 'success' | 'error';
+  output_file?: string;
+  message?: string;
+  content?: any;
+}
+
 interface ExtractionResult {
   dataset: string;
   output_directory: string;
   processed_files: number;
-  results: Array<{
-    filename: string;
-    status: 'success' | 'error';
-    output_file?: string;
-    message?: string;
-  }>;
+  results: FileProcessingResult[];
 }
 
 // Configure axios to use the API endpoint
@@ -83,6 +104,10 @@ export default function DatasetDetailView() {
   const [extracting, setExtracting] = useState(false);
   const [extractionResult, setExtractionResult] = useState<ExtractionResult | null>(null);
   const [showProgress, setShowProgress] = useState<boolean>(false);
+  const [partialResults, setPartialResults] = useState<FileProcessingResult[]>([]);
+  const [expandedRows, setExpandedRows] = useState<Record<string, boolean>>({});
+  const [selectedPdf, setSelectedPdf] = useState<string | null>(null);
+  const [fileContent, setFileContent] = useState<Record<string, any>>({});
 
   useEffect(() => {
     if (!source || !datasetName) {
@@ -92,6 +117,39 @@ export default function DatasetDetailView() {
     
     fetchData();
   }, [source, datasetName]);
+
+  // New socket event handler for file completions
+  useEffect(() => {
+    if (!source || !datasetName || !extracting) return;
+
+    // Set up event listener for file completions
+    const handleFileCompletion = (data: any) => {
+      console.log('File processing completed:', data);
+      if (data && data.result) {
+        setPartialResults(prev => {
+          // Check if we already have this file result
+          const existingIndex = prev.findIndex(r => r.filename === data.result.filename);
+          if (existingIndex >= 0) {
+            // Replace existing entry
+            const updatedResults = [...prev];
+            updatedResults[existingIndex] = data.result;
+            return updatedResults;
+          } else {
+            // Add new entry
+            return [...prev, data.result];
+          }
+        });
+      }
+    };
+
+    // Add event listener to socket
+    document.addEventListener('file_processed', (e: any) => handleFileCompletion(e.detail));
+
+    // Cleanup
+    return () => {
+      document.removeEventListener('file_processed', (e: any) => handleFileCompletion(e.detail));
+    };
+  }, [source, datasetName, extracting]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -169,6 +227,8 @@ export default function DatasetDetailView() {
     setExtractionResult(null);
     setShowProgress(true);
     setError('');
+    setPartialResults([]);
+    setExpandedRows({});
     
     try {
       // Get the schema object
@@ -197,6 +257,57 @@ export default function DatasetDetailView() {
     }
   };
 
+  const handleExtractionComplete = () => {
+    console.log('Extraction completed, hiding progress component');
+    setShowProgress(false);
+    
+    // Refresh data to ensure we have the latest results
+    fetchData();
+  };
+
+  const toggleExpandRow = (filename: string) => {
+    setExpandedRows(prev => ({
+      ...prev,
+      [filename]: !prev[filename]
+    }));
+
+    // Fetch file content if not already loaded
+    if (!fileContent[filename] && extractionResult) {
+      const result = extractionResult.results.find(r => r.filename === filename);
+      if (result && result.status === 'success' && result.output_file) {
+        fetchFileContent(result.output_file);
+      }
+    }
+  };
+
+  const fetchFileContent = async (outputFile: string) => {
+    try {
+      const response = await api.get(`/api/file-content?path=${encodeURIComponent(outputFile)}`);
+      if (response.data && response.data.content) {
+        setFileContent(prev => ({
+          ...prev,
+          [outputFile]: response.data.content
+        }));
+      }
+    } catch (err) {
+      console.error('Error fetching file content:', err);
+      setError(`Failed to fetch content for ${outputFile}`);
+      setTimeout(() => setError(''), 3000);
+    }
+  };
+
+  const handlePreviewPdf = (filename: string) => {
+    if (!source || !datasetName) {
+      setError('Source or dataset name is undefined');
+      return;
+    }
+    setSelectedPdf(`http://localhost:5000/api/preview-file/${source}/${encodeURIComponent(datasetName)}/${encodeURIComponent(filename)}`);
+  };
+
+  const handleClosePdfPreview = () => {
+    setSelectedPdf(null);
+  };
+  
   // Function to reset all socket room data
   const handleClearAllRooms = () => {
     console.log('DatasetDetailView: Clearing all room data');
@@ -205,6 +316,10 @@ export default function DatasetDetailView() {
     setNotification('All room data cleared');
     setTimeout(() => setNotification(''), 3000);
   };
+
+  // Determine which results to show
+  const resultsToShow = extractionResult ? extractionResult.results : 
+                       partialResults.length > 0 ? partialResults : [];
 
   if (loading) {
     return (
@@ -281,14 +396,16 @@ export default function DatasetDetailView() {
           source={source} 
           datasetName={datasetName} 
           initialMode={extracting ? 'active' : 'check'} 
+          onComplete={handleExtractionComplete}
         />
       ) : null}
       
       {/* Main content area */}
       <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3 }}>
-        {/* Left side - File list */}
-        <Box sx={{ flex: { xs: '1 1 100%', md: '7 1 0%' } }}>
-          <Paper elevation={2} sx={{ height: '100%', p: 2 }}>
+        {/* Left side content */}
+        <Box sx={{ flex: { xs: '1 1 100%', md: '7 1 0%' }, display: 'flex', flexDirection: 'column', gap: 3 }}>
+          {/* File list */}
+          <Paper elevation={2} sx={{ p: 2 }}>
             <Typography variant="h6" gutterBottom>
               Files ({files.length})
             </Typography>
@@ -298,14 +415,23 @@ export default function DatasetDetailView() {
                 No files found in this dataset
               </Typography>
             ) : (
-              <List sx={{ maxHeight: 500, overflow: 'auto' }}>
+              <List sx={{ maxHeight: 300, overflow: 'auto' }}>
                 {files.map((file, index) => (
                   <React.Fragment key={file.path}>
-                    <ListItem>
+                    <ListItem
+                      secondaryAction={
+                        <IconButton 
+                          edge="end" 
+                          onClick={() => handlePreviewPdf(file.name)}
+                          disabled={!file.name.toLowerCase().endsWith('.pdf')}
+                        >
+                          <PdfIcon />
+                        </IconButton>
+                      }
+                    >
                       <FileIcon sx={{ mr: 1, color: 'text.secondary' }} />
                       <ListItemText 
                         primary={file.name} 
-                        // Display file size if available
                         secondary={file.size ? `${(file.size / 1024 / 1024).toFixed(2)} MB` : null}
                       />
                     </ListItem>
@@ -315,6 +441,127 @@ export default function DatasetDetailView() {
               </List>
             )}
           </Paper>
+          
+          {/* Extraction Results table */}
+          {resultsToShow.length > 0 && (
+            <Paper elevation={2} sx={{ p: 2 }}>
+              <Typography variant="h6" gutterBottom>
+                Extraction Results
+                {extractionResult && (
+                  <Typography variant="body2" component="span" sx={{ ml: 2 }}>
+                    ({extractionResult.processed_files} files processed)
+                  </Typography>
+                )}
+                {partialResults.length > 0 && !extractionResult && (
+                  <Typography variant="body2" component="span" sx={{ ml: 2 }}>
+                    ({partialResults.length} files processed so far)
+                  </Typography>
+                )}
+              </Typography>
+              
+              <TableContainer sx={{ maxHeight: 400, overflow: 'auto' }}>
+                <Table stickyHeader size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell width="5%"></TableCell>
+                      <TableCell width="10%">Status</TableCell>
+                      <TableCell width="30%">Filename</TableCell>
+                      <TableCell width="45%">Details</TableCell>
+                      <TableCell width="10%">Actions</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {resultsToShow.map((result, index) => (
+                      <React.Fragment key={index}>
+                        <TableRow 
+                          sx={{ 
+                            '&:nth-of-type(odd)': { backgroundColor: 'action.hover' },
+                            backgroundColor: result.status === 'success' ? 'rgba(76, 175, 80, 0.08)' : 'rgba(239, 83, 80, 0.08)'
+                          }}
+                        >
+                          <TableCell>
+                            <IconButton 
+                              size="small" 
+                              onClick={() => toggleExpandRow(result.filename)}
+                              disabled={result.status !== 'success'}
+                            >
+                              {expandedRows[result.filename] ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                            </IconButton>
+                          </TableCell>
+                          <TableCell>
+                            {result.status === 'success' ? (
+                              <CheckCircleIcon color="success" fontSize="small" />
+                            ) : (
+                              <ErrorIcon color="error" fontSize="small" />
+                            )}
+                          </TableCell>
+                          <TableCell>{result.filename}</TableCell>
+                          <TableCell>
+                            {result.status === 'success'
+                              ? result.output_file
+                              : result.message
+                            }
+                          </TableCell>
+                          <TableCell>
+                            <Tooltip title="Preview Original PDF">
+                              <IconButton 
+                                size="small" 
+                                onClick={() => handlePreviewPdf(result.filename)}
+                                disabled={!result.filename.toLowerCase().endsWith('.pdf')}
+                              >
+                                <PdfIcon />
+                              </IconButton>
+                            </Tooltip>
+                            {result.status === 'success' && (
+                              <Tooltip title="View Extracted Data">
+                                <IconButton 
+                                  size="small" 
+                                  onClick={() => toggleExpandRow(result.filename)}
+                                >
+                                  <CodeIcon />
+                                </IconButton>
+                              </Tooltip>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                        {result.status === 'success' && result.output_file && (
+                          <TableRow>
+                            <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={5}>
+                              <Collapse in={expandedRows[result.filename]} timeout="auto" unmountOnExit>
+                                <Box sx={{ margin: 1, p: 1, backgroundColor: 'background.paper' }}>
+                                  <Typography variant="h6" gutterBottom component="div">
+                                    Extracted Content
+                                  </Typography>
+                                  <Box 
+                                    sx={{ 
+                                      p: 2, 
+                                      overflowX: 'auto',
+                                      fontFamily: 'monospace',
+                                      fontSize: '0.875rem',
+                                      backgroundColor: 'grey.100',
+                                      borderRadius: 1
+                                    }}
+                                  >
+                                    {result.output_file && fileContent[result.output_file] ? (
+                                      <pre>{JSON.stringify(fileContent[result.output_file], null, 2)}</pre>
+                                    ) : (
+                                      <Box sx={{ display: 'flex', justifyContent: 'center', p: 2 }}>
+                                        <CircularProgress size={24} />
+                                      </Box>
+                                    )}
+                                  </Box>
+                                </Box>
+                              </Collapse>
+                            </TableCell>
+                          </TableRow>
+                        )}
+                      </React.Fragment>
+                    ))}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            </Paper>
+          )}
         </Box>
         
         {/* Right side - Schema selection and actions */}
@@ -354,47 +601,45 @@ export default function DatasetDetailView() {
               {extracting ? 'Extracting...' : 'Extract Data with Selected Schema'}
             </Button>
           </Paper>
-          
-          {/* Extraction Results */}
-          {extractionResult && (
-            <Paper elevation={2} sx={{ p: 2 }}>
-              <Typography variant="h6" gutterBottom>
-                Extraction Results
-              </Typography>
-              
-              <Typography variant="body2" gutterBottom>
-                <strong>Processed Files:</strong> {extractionResult.processed_files}
-              </Typography>
-              
-              <Typography variant="body2" gutterBottom>
-                <strong>Output Directory:</strong> {extractionResult.output_directory}
-              </Typography>
-              
-              <Typography variant="subtitle2" sx={{ mt: 2, mb: 1 }}>
-                File Results:
-              </Typography>
-              
-              <List sx={{ maxHeight: 200, overflow: 'auto' }}>
-                {extractionResult.results.map((result, index) => (
-                  <ListItem key={index}>
-                    <ListItemText
-                      primary={result.filename}
-                      secondary={
-                        result.status === 'success'
-                          ? `Extracted to ${result.output_file}`
-                          : result.message
-                      }
-                      primaryTypographyProps={{
-                        color: result.status === 'success' ? 'success.main' : 'error.main'
-                      }}
-                    />
-                  </ListItem>
-                ))}
-              </List>
-            </Paper>
-          )}
         </Box>
       </Box>
+      
+      {/* PDF Preview Dialog */}
+      <Dialog
+        open={!!selectedPdf}
+        onClose={handleClosePdfPreview}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogTitle>
+          PDF Preview
+          <IconButton
+            aria-label="close"
+            onClick={handleClosePdfPreview}
+            sx={{
+              position: 'absolute',
+              right: 8,
+              top: 8,
+            }}
+          >
+            <ArrowBackIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          {selectedPdf && (
+            <iframe
+              src={selectedPdf}
+              width="100%"
+              height="600px"
+              title="PDF Preview"
+              style={{ border: 'none' }}
+            />
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleClosePdfPreview}>Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 } 

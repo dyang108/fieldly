@@ -251,17 +251,34 @@ const ExtractionProgress: React.FC<ExtractionProgressProps> = ({
       next_file: string | null;
     }) => {
       if (!isMounted.current) return;
+      console.log('[Socket] File completed update received:', data);
       debugStateUpdate('file_completed', data);
       
-      setState(prev => ({
-        ...prev,
-        processed_files: data.processed_files,
-        total_files: data.total_files,
-        current_file: data.next_file || prev.current_file,
-        file_progress: data.next_file ? 0 : 1,
-        // Ensure the status is in_progress when files are being processed
-        status: 'in_progress'
-      }));
+      setState(prev => {
+        const newState = {
+          ...prev,
+          processed_files: data.processed_files,
+          total_files: data.total_files,
+          current_file: data.next_file || prev.current_file,
+          file_progress: data.next_file ? 0 : 1,
+          // Ensure the status is in_progress when files are being processed
+          status: 'in_progress'
+        };
+        console.log('[Socket] Updated file completed state:', newState);
+        return newState;
+      });
+      
+      // Emit a custom event that the parent component can listen for
+      const fileProcessedEvent = new CustomEvent('file_processed', {
+        detail: {
+          result: {
+            filename: data.completed_file,
+            status: 'success', // Assuming success for now, we'll need to modify this if we get status info
+            output_file: `results/${source}/${datasetName}/${data.completed_file.replace(/\.[^/.]+$/, '.json')}`,
+          }
+        }
+      });
+      document.dispatchEvent(fileProcessedEvent);
     };
     
     const handleMergedData = (data: { merged_data: any }) => {
