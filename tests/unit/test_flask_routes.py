@@ -42,8 +42,9 @@ def test_extraction_status_endpoint(test_client):
 
     # Test the endpoint
     response = test_client.get("/api/extract/status/local/test-dataset")
-    assert response.status_code == 404
-    assert 'error' in response.json
+    assert response.status_code == 200
+    assert 'exists' in response.json
+    assert response.json['exists'] == False
 
 
 def test_get_extraction_state_endpoint(test_client):
@@ -54,5 +55,6 @@ def test_get_extraction_state_endpoint(test_client):
 
     # Test the endpoint
     response = test_client.get("/api/extract/state/local/test-dataset")
-    assert response.status_code == 404
-    assert 'error' in response.json 
+    assert response.status_code == 200
+    assert 'exists' in response.json
+    assert response.json['exists'] == False 
