@@ -463,7 +463,7 @@ def get_extraction_results(source, dataset_name):
         
         results = []
         results_dir = None
-        directory = os.path.join('.data', 'cached', f"{dataset_name}-extracted")
+        directory = os.path.join('.data', f"{dataset_name}-extracted")
         print(directory)
         if os.path.exists(directory):
             logger.info(f"Found results directory at {directory}")
