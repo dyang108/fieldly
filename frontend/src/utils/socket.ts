@@ -14,7 +14,7 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 
 export const getSocket = (): Socket => {
   if (!socket) {
-    console.log('[Socket:Util] Creating new socket.io connection');
+    console.log('Creating new socket.io connection');
     
     // Connect to the server
     socket = io('http://localhost:5000', {
@@ -33,19 +33,19 @@ export const getSocket = (): Socket => {
     
     // Add global event listeners
     socket.on('connect', () => {
-      console.log('[Socket:Util] Socket connected with ID:', socket?.id);
+      console.log('Socket connected with ID:', socket?.id);
       reconnectAttempts = 0; // Reset reconnect attempts on successful connection
       
       // Rejoin previously connected rooms on reconnection
       if (connectedRooms.length > 0) {
-        console.log('[Socket:Util] Rejoining previously connected rooms:', connectedRooms);
+        console.log('Rejoining previously connected rooms:', connectedRooms);
         connectedRooms.forEach(room => {
           const [source, datasetName] = room.split('_');
           socket?.emit('join_extraction_room', { 
             source, 
             dataset_name: datasetName 
           });
-          console.log(`[Socket:Util] Rejoined room: ${room}`);
+          console.log(`Rejoined room: ${room}`);
         });
       }
       
@@ -53,57 +53,51 @@ export const getSocket = (): Socket => {
     });
     
     socket.on('disconnect', (reason) => {
-      console.log('[Socket:Util] Socket disconnected, reason:', reason);
+      console.log('Socket disconnected, reason:', reason);
       
       // If the server disconnected us, try to reconnect manually
       if (reason === 'io server disconnect') {
-        console.log('[Socket:Util] Server disconnected the socket, attempting to reconnect...');
+        console.log('Server disconnected the socket, attempting to reconnect...');
         socket?.connect();
       }
       
       // If the socket disconnected due to transport close, try to reconnect
       if (reason === 'transport close' && reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
         reconnectAttempts++;
-        console.log(`[Socket:Util] Reconnect attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`);
+        console.log(`Reconnect attempt ${reconnectAttempts}/${MAX_RECONNECT_ATTEMPTS}...`);
         
         setTimeout(() => {
-          console.log('[Socket:Util] Attempting to reconnect after transport close...');
+          console.log('Attempting to reconnect after transport close...');
           socket?.connect();
         }, 1000 * reconnectAttempts); // Exponential backoff
       }
     });
     
     socket.on('connect_error', (err) => {
-      console.error('[Socket:Util] Socket connection error:', err);
+      console.error('Socket connection error:', err);
       reconnectAttempts++;
       
       if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
-        console.error('[Socket:Util] Max reconnection attempts reached, giving up');
+        console.error('Max reconnection attempts reached, giving up');
       }
     });
     
     socket.on('error', (err) => {
-      console.error('[Socket:Util] Socket error event received:', err);
+      console.error('Socket error event received:', err);
     });
     
     socket.on('connection_established', (data) => {
-      console.log('[Socket:Util] Connection established with server:', data);
+      console.log('Connection established with server:', data);
     });
     
     // Handle acknowledgment of joining a room
     socket.on('room_joined', (data) => {
-      console.log('[Socket:Util] Successfully joined room:', data.room);
-      // Add debug info about current callbacks after joining
-      console.log('[Socket:Util] Current event callbacks after joining:', 
-        Object.keys((socket as any)?._callbacks || {})
-          .filter(key => key.startsWith('$'))
-          .map(key => key.substring(1))
-      );
+      console.log('Successfully joined room:', data.room);
     });
     
     // Handle acknowledgment of leaving a room
     socket.on('room_left', (data) => {
-      console.log('[Socket:Util] Successfully left room:', data.room);
+      console.log('Successfully left room:', data.room);
     });
   }
   
@@ -111,48 +105,42 @@ export const getSocket = (): Socket => {
 };
 
 export const joinRoom = (source: string, datasetName: string): void => {
-  if (!source || !datasetName) return;
-  
+  const socket = getSocket();
   const roomId = `${source}_${datasetName}`;
   
-  if (socket) {
-    console.log(`[Socket:Util] Joining room ${roomId}`);
-    socket.emit('join_extraction_room', { 
-      source, 
-      dataset_name: datasetName 
-    });
-    
-    // Add to our connected rooms list if not already there
-    if (!connectedRooms.includes(roomId)) {
-      connectedRooms.push(roomId);
-      console.log(`[Socket:Util] Added ${roomId} to connected rooms list:`, connectedRooms);
-    }
-  } else {
-    console.error(`[Socket:Util] Cannot join room ${roomId}: Socket not initialized`);
+  console.log(`Joining room: ${roomId}`);
+  
+  // Store the room for reconnection
+  if (!connectedRooms.includes(roomId)) {
+    connectedRooms.push(roomId);
+    console.log(`Added ${roomId} to connected rooms list:`, connectedRooms);
   }
+  
+  // Join the room
+  socket.emit('join_extraction_room', { 
+    source, 
+    dataset_name: datasetName 
+  });
 };
 
 export const leaveRoom = (source: string, datasetName: string): void => {
-  if (!source || !datasetName) return;
-  
+  const socket = getSocket();
   const roomId = `${source}_${datasetName}`;
   
-  if (socket) {
-    console.log(`[Socket:Util] Leaving room ${roomId}`);
-    socket.emit('leave_extraction_room', { 
-      source, 
-      dataset_name: datasetName 
-    });
-    
-    // Remove from our connected rooms list
-    const index = connectedRooms.indexOf(roomId);
-    if (index !== -1) {
-      connectedRooms.splice(index, 1);
-      console.log(`[Socket:Util] Removed ${roomId} from connected rooms list:`, connectedRooms);
-    }
-  } else {
-    console.error(`[Socket:Util] Cannot leave room ${roomId}: Socket not initialized`);
+  console.log(`Leaving room: ${roomId}`);
+  
+  // Remove from connected rooms list
+  const index = connectedRooms.indexOf(roomId);
+  if (index !== -1) {
+    connectedRooms.splice(index, 1);
+    console.log(`Removed ${roomId} from connected rooms list:`, connectedRooms);
   }
+  
+  // Leave the room
+  socket.emit('leave_extraction_room', {
+    source,
+    dataset_name: datasetName
+  });
 };
 
 export const closeSocket = (): void => {
