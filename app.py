@@ -1,18 +1,42 @@
+#!/usr/bin/env python3
+# IMPORTANT: Eventlet monkey patching must happen before any other imports
+import eventlet
+# Check if already patched to avoid issues
+if not getattr(eventlet, 'already_patched', False):
+    eventlet.monkey_patch()
+    setattr(eventlet, 'already_patched', True)
+
 import os
 import logging
 from typing import Optional, Dict, Any, Union, List, cast
 from flask import Flask, request, jsonify, send_from_directory, Response
-
+from flask_socketio import SocketIO, emit, disconnect, join_room, leave_room, rooms, close_room
 from flask_cors import CORS
+import collections
+import json
+import time
+from pathlib import Path
+import threading
+import inspect
+import sys
 
+# All other imports
 from db import init_db
 from routes import register_blueprints
 from constants import MODEL_CONFIGS, DEFAULT_OLLAMA_HOST, DEFAULT_OLLAMA_API_PATH, DEFAULT_DATABASE_NAME
 from type_definitions import StorageType
+from utils import extraction_progress
+from utils.s3_utils import list_s3_buckets, list_s3_objects
+from utils.schema_generator import generate_schema_from_file, merge_schemas
+from utils.file_utils import get_file_type, is_supported_file_type, list_files_with_extensions
 
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+
+# Increase engineio logging
+engineio_logger = logging.getLogger('engineio')
+engineio_logger.setLevel(logging.DEBUG)
 
 # Create Flask app
 app: Flask = Flask(__name__,
@@ -29,6 +53,25 @@ CORS(app, resources={
         "allow_headers": ["Content-Type", "Authorization"]
     }
 })
+
+# Initialize SocketIO with eventlet for better WebSocket support
+socketio = SocketIO(
+    app, 
+    cors_allowed_origins=["http://localhost:5173", "http://localhost:5000"], 
+    logger=True, 
+    engineio_logger=True,
+    async_mode='eventlet',     # Use eventlet for better WebSocket support
+    ping_timeout=60,           # Increase timeout
+    ping_interval=25,          # Reduce ping interval
+    max_http_buffer_size=5 * 1024 * 1024,  # Set max buffer size to 5MB
+    websocket_transport_options={
+        'check_origin': lambda origin: True,  # More permissive origin checking
+    },
+    always_connect=True,       # Always establish a connection even if there are errors
+)
+
+# Initialize extraction progress module with socketio
+extraction_progress.init_socketio(socketio)
 
 # Load configuration from environment variables
 app.config.update(
@@ -59,6 +102,157 @@ init_db(app.config['DATABASE_URL'], drop_first=False)
 # Register blueprints
 register_blueprints(app)
 
+# Keep track of clients in rooms
+room_clients = collections.defaultdict(set)
+
+# Handle WebSocket errors
+@socketio.on_error()
+def error_handler(e):
+    """Handle errors in SocketIO events"""
+    logger.error(f"SocketIO error: {str(e)}", exc_info=True)
+    if request.sid:
+        emit('error', {'message': f'An error occurred: {str(e)}'}, to=request.sid)
+
+# Handle general Flask errors
+@app.errorhandler(Exception)
+def handle_exception(e):
+    """Handle general Flask exceptions"""
+    logger.error(f"Flask exception: {str(e)}", exc_info=True)
+    return jsonify({'error': str(e)}), 500
+
+# Socket.IO event handlers
+@socketio.on('connect')
+def handle_connect():
+    """Handle client connection"""
+    logger.info(f"Client connected: {request.sid}")
+    emit('connection_established', {'status': 'connected', 'sid': request.sid})
+
+@socketio.on('disconnect')
+def handle_disconnect(reason=None):
+    """
+    Handle client disconnection
+    
+    Args:
+        reason: The reason for disconnection (provided by Socket.IO)
+    """
+    client_sid = request.sid
+    logger.info(f"Client disconnected: {client_sid}, reason: {reason}")
+    
+    # Find rooms this client was in
+    client_rooms = []
+    for room, clients in room_clients.items():
+        if client_sid in clients:
+            client_rooms.append(room)
+            clients.remove(client_sid)
+    
+    # Check if any rooms are now empty and clean up extraction state
+    for room in client_rooms:
+        if not room_clients[room]:
+            logger.info(f"Room {room} is now empty, cleaning up extraction state")
+            # Parse room name to get source and dataset_name
+            try:
+                source, dataset_name = room.split('_', 1)
+                current_state = extraction_progress.get_extraction_state(source, dataset_name)
+                
+                # Only clean up if extraction is complete or failed
+                if current_state and current_state.get('status') in ['completed', 'failed']:
+                    logger.info(f"Cleaning up extraction state for {room}")
+                    extraction_progress.clear_extraction_state(source, dataset_name)
+                    # Close the room
+                    close_room(room)
+                    # Remove the room from our tracking
+                    del room_clients[room]
+            except Exception as e:
+                logger.error(f"Error cleaning up room {room}: {str(e)}", exc_info=True)
+
+@socketio.on('join_extraction_room')
+def handle_join_room(data):
+    """
+    Join a room for a specific dataset extraction process
+    
+    Args:
+        data: Dictionary containing dataset name and source
+    """
+    try:
+        dataset_name = data.get('dataset_name')
+        source = data.get('source')
+        
+        if not dataset_name or not source:
+            emit('error', {'message': 'Dataset name and source are required'})
+            return
+        
+        room = f"{source}_{dataset_name}"
+        
+        # Join the socket.io room
+        join_room(room)
+        # Track the client in this room
+        room_clients[room].add(request.sid)
+        
+        logger.info(f"Client {request.sid} joined room: {room} (clients: {len(room_clients[room])})")
+        
+        # Get the current extraction state if available
+        current_state = extraction_progress.get_extraction_state(source, dataset_name)
+        
+        # Send current state if available
+        if current_state:
+            logger.info(f"Sending current extraction state for {room}: {current_state['status']}")
+            emit('extraction_state', current_state)
+        else:
+            logger.info(f"No extraction state found for {room}, sending idle state")
+            emit('extraction_state', {
+                'status': 'idle',
+                'total_files': 0,
+                'processed_files': 0,
+                'current_file': '',
+                'merged_data': {}
+            })
+        
+        # Acknowledge joining the room
+        emit('room_joined', {'room': room})
+    except Exception as e:
+        logger.error(f"Error in handle_join_room: {str(e)}", exc_info=True)
+        emit('error', {'message': f'Error joining room: {str(e)}'})
+
+@socketio.on('leave_extraction_room')
+def handle_leave_room(data):
+    """
+    Leave a room for a specific dataset extraction process
+    
+    Args:
+        data: Dictionary containing dataset name and source
+    """
+    try:
+        dataset_name = data.get('dataset_name')
+        source = data.get('source')
+        
+        if not dataset_name or not source:
+            emit('error', {'message': 'Dataset name and source are required'})
+            return
+        
+        room = f"{source}_{dataset_name}"
+        
+        # Leave the socket.io room
+        leave_room(room)
+        # Remove client from our tracking
+        if request.sid in room_clients[room]:
+            room_clients[room].remove(request.sid)
+        
+        logger.info(f"Client {request.sid} left room: {room} (clients left: {len(room_clients[room])})")
+        
+        # If room is now empty, clean up
+        if not room_clients[room] and extraction_progress.get_extraction_state(source, dataset_name):
+            current_state = extraction_progress.get_extraction_state(source, dataset_name)
+            # Only clean up if extraction is complete or failed
+            if current_state and current_state.get('status') in ['completed', 'failed']:
+                logger.info(f"Room {room} is now empty, cleaning up extraction state")
+                extraction_progress.clear_extraction_state(source, dataset_name)
+        
+        # Acknowledge leaving the room
+        emit('room_left', {'room': room})
+    except Exception as e:
+        logger.error(f"Error in handle_leave_room: {str(e)}", exc_info=True)
+        emit('error', {'message': f'Error leaving room: {str(e)}'})
+
 # Serve the React app
 @app.route('/')
 def index() -> Response:
@@ -72,5 +266,97 @@ def serve(path: str) -> Response:
     else:
         return send_from_directory(app.static_folder, 'index.html')
 
+# New API endpoint to check if an extraction room is active
+@app.route('/api/extraction-room-status/<source>/<dataset_name>', methods=['GET'])
+def check_extraction_room_status(source: str, dataset_name: str):
+    """Check if an extraction room is active on the server
+
+    Args:
+        source: The source of the dataset
+        dataset_name: The name of the dataset
+
+    Returns:
+        JSON response with the room status
+    """
+    try:
+        # Get the extraction state for the room
+        state = extraction_progress.get_extraction_state(source, dataset_name)
+        
+        room_status = {
+            'active': state is not None,
+            'status': state['status'] if state else 'no_session',
+            'room': f"{source}_{dataset_name}"
+        }
+        
+        logger.info(f"Checked room status for {source}_{dataset_name}: {room_status}")
+        return jsonify(room_status)
+    except Exception as e:
+        logger.error(f"Error checking room status: {str(e)}", exc_info=True)
+        return jsonify({
+            'active': False,
+            'status': 'error',
+            'message': str(e),
+            'room': f"{source}_{dataset_name}"
+        }), 500
+
+# Add the ping endpoint for server reachability checks
+@app.route('/api/ping', methods=['GET'])
+def ping():
+    """Simple ping endpoint to check if server is alive"""
+    return jsonify({'status': 'ok', 'timestamp': int(time.time())})
+
+# Add endpoint to check if extraction is active
+@app.route('/api/extraction/status', methods=['GET'])
+def check_extraction_status():
+    """Check if an extraction is currently active for a dataset"""
+    source = request.args.get('source')
+    dataset_name = request.args.get('dataset_name')
+    
+    if not source or not dataset_name:
+        return jsonify({'error': 'Missing source or dataset_name parameter'}), 400
+    
+    is_active = extraction_progress.is_extraction_active(source, dataset_name)
+    
+    return jsonify({
+        'source': source,
+        'dataset_name': dataset_name,
+        'is_active': is_active
+    })
+
+# Add endpoint to get extraction state
+@app.route('/api/extraction/state', methods=['GET'])
+def get_extraction_state():
+    """Get the current state of an extraction"""
+    source = request.args.get('source')
+    dataset_name = request.args.get('dataset_name')
+    
+    if not source or not dataset_name:
+        return jsonify({'error': 'Missing source or dataset_name parameter'}), 400
+    
+    state = extraction_progress.get_extraction_state(source, dataset_name)
+    
+    if not state:
+        return jsonify({
+            'source': source,
+            'dataset_name': dataset_name,
+            'state': None,
+            'is_active': False
+        }), 404
+    
+    return jsonify({
+        'source': source,
+        'dataset_name': dataset_name,
+        'state': state,
+        'is_active': extraction_progress.is_extraction_active(source, dataset_name)
+    })
+
 if __name__ == '__main__':
-    app.run(debug=True) 
+    # Use eventlet's WSGI server when running directly
+    socketio.run(
+        app, 
+        debug=True,
+        host='0.0.0.0',
+        port=5000,
+        use_reloader=True,
+        allow_unsafe_werkzeug=False  # Not needed with eventlet
+    ) 

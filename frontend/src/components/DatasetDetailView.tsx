@@ -21,16 +21,23 @@ import {
   CardContent,
   Snackbar,
   IconButton,
-  Breadcrumbs
+  Breadcrumbs,
+  Tooltip
 } from '@mui/material';
 import {
   ArrowBack as ArrowBackIcon,
   Refresh as RefreshIcon,
   InsertDriveFile as FileIcon,
-  Link as LinkIcon
+  Link as LinkIcon,
+  Delete as DeleteIcon
 } from '@mui/icons-material';
 import axios from 'axios';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import ExtractionProgress from './ExtractionProgress';
+import { 
+  isRoomActive, 
+  clearAllRoomData
+} from '../utils/socket';
 
 interface Schema {
   id: number;
@@ -75,6 +82,7 @@ export default function DatasetDetailView() {
   const [notification, setNotification] = useState('');
   const [extracting, setExtracting] = useState(false);
   const [extractionResult, setExtractionResult] = useState<ExtractionResult | null>(null);
+  const [showProgress, setShowProgress] = useState<boolean>(false);
 
   useEffect(() => {
     if (!source || !datasetName) {
@@ -159,6 +167,8 @@ export default function DatasetDetailView() {
 
     setExtracting(true);
     setExtractionResult(null);
+    setShowProgress(true);
+    setError('');
     
     try {
       // Get the schema object
@@ -185,6 +195,15 @@ export default function DatasetDetailView() {
     } finally {
       setExtracting(false);
     }
+  };
+
+  // Function to reset all socket room data
+  const handleClearAllRooms = () => {
+    console.log('DatasetDetailView: Clearing all room data');
+    clearAllRoomData();
+    setShowProgress(false);
+    setNotification('All room data cleared');
+    setTimeout(() => setNotification(''), 3000);
   };
 
   if (loading) {
@@ -223,13 +242,24 @@ export default function DatasetDetailView() {
           />
         </Box>
         
-        <Button
-          startIcon={<RefreshIcon />}
-          variant="outlined"
-          onClick={fetchData}
-        >
-          Refresh
-        </Button>
+        <Box>
+          <Tooltip title="Reset socket rooms">
+            <IconButton
+              color="error"
+              onClick={handleClearAllRooms}
+              sx={{ mr: 1 }}
+            >
+              <DeleteIcon />
+            </IconButton>
+          </Tooltip>
+          <Button
+            startIcon={<RefreshIcon />}
+            variant="outlined"
+            onClick={fetchData}
+          >
+            Refresh
+          </Button>
+        </Box>
       </Box>
       
       {error && (
@@ -244,6 +274,15 @@ export default function DatasetDetailView() {
         anchorOrigin={{ vertical: 'top', horizontal: 'center' }}
         onClose={() => setNotification('')}
       />
+      
+      {/* Show progress component conditionally */}
+      {showProgress && source && datasetName ? (
+        <ExtractionProgress 
+          source={source} 
+          datasetName={datasetName} 
+          initialMode={extracting ? 'active' : 'check'} 
+        />
+      ) : null}
       
       {/* Main content area */}
       <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 3 }}>

@@ -10,6 +10,7 @@ from db import db, Schema, DatasetSchemaMapping
 from storage import create_storage, Storage
 from ai import create_schema_generator, create_llm_extractor
 from ai.extractor import DataExtractor
+from utils import extraction_progress
 from constants import (
     STORAGE_TYPE, LOCAL_STORAGE_PATH, S3_BUCKET_NAME, AWS_ACCESS_KEY_ID,
     AWS_SECRET_ACCESS_KEY, AWS_REGION, USE_LOCAL_MODEL, LLM_PROVIDER,
@@ -152,16 +153,38 @@ def extract_dataset(source: str, dataset_name: str) -> Tuple[Response, int]:
             storage.create_dataset(output_dir)
             logger.info(f"Created output directory: {output_dir}")
         
+        # Initialize extraction tracking
+        file_names = [file_info.get('name', '') for file_info in files]
+        pdf_files = [f for f in file_names if f.lower().endswith('.pdf')]
+        extraction_progress.start_extraction(source, dataset_name, pdf_files)
+        
         # Process each file
         results: List[FileResult] = []
+        merged_data = {}
+        
         for file_info in files:
             filename = file_info.get('name', '')
             if not filename.lower().endswith('.pdf'):
                 logger.info(f"Skipping non-PDF file: {filename}")
                 continue
                 
-            result = process_file(storage, dataset_name, output_dir, filename, schema_data)
+            # Update current file in progress
+            extraction_progress.update_file_progress(source, dataset_name, filename, 0.2)
+            
+            # Process the file
+            result = process_file(storage, dataset_name, output_dir, filename, schema_data, source)
             results.append(result)
+            
+            # Mark file as completed
+            extraction_progress.file_completed(source, dataset_name, filename)
+            
+        # Complete the extraction
+        extraction_progress.complete_extraction(
+            source, 
+            dataset_name, 
+            success=True, 
+            message=f"Successfully processed {len(results)} files"
+        )
             
         return jsonify({
             'success': True,
@@ -173,13 +196,22 @@ def extract_dataset(source: str, dataset_name: str) -> Tuple[Response, int]:
         
     except Exception as e:
         logger.error(f"Error in extraction process: {str(e)}", exc_info=True)
+        
+        # Mark extraction as failed
+        extraction_progress.complete_extraction(
+            source, 
+            dataset_name, 
+            success=False, 
+            message=f"Error in extraction process: {str(e)}"
+        )
+        
         return jsonify({'error': str(e)}), 500
     finally:
         db.close_session(session)
 
 
 def process_file(storage: Storage, dataset_name: str, output_dir: str, 
-                filename: str, schema: Dict[str, Any]) -> FileResult:
+                filename: str, schema: Dict[str, Any], source: str) -> FileResult:
     """Process a single file through the extraction pipeline"""
     try:
         logger.info(f"Starting extraction pipeline for file: {filename}")
@@ -201,6 +233,7 @@ def process_file(storage: Storage, dataset_name: str, output_dir: str,
             md_dir.mkdir(exist_ok=True, parents=True)
             
             # 1. Convert PDF to Markdown if not already done
+            extraction_progress.update_file_progress(source, dataset_name, filename, 0.2)
             if not md_path.exists():
                 logger.info(f"Converting PDF to Markdown: {pdf_path}")
                 convert_pdf_to_markdown(str(pdf_path), str(md_path))
@@ -213,6 +246,7 @@ def process_file(storage: Storage, dataset_name: str, output_dir: str,
             use_api = os.environ.get('USE_API', 'false').lower() == 'true'
             
             # Configure the extractor
+            extraction_progress.update_file_progress(source, dataset_name, filename, 0.4)
             extractor_config = {
                 'use_api': use_api,
                 'provider': provider
@@ -238,10 +272,15 @@ def process_file(storage: Storage, dataset_name: str, output_dir: str,
             extractor = create_llm_extractor(**extractor_config)
             
             # 2. Extract data from Markdown based on schema
+            extraction_progress.update_file_progress(source, dataset_name, filename, 0.6)
             logger.info(f"Starting data extraction from Markdown using schema")
-            extracted_data = extract_data_from_markdown(md_path, schema, extractor)
+            extracted_data = extract_data_from_markdown(md_path, schema, extractor, source, dataset_name, filename)
+            
+            # Send update with the extracted data
+            extraction_progress.update_merged_data(source, dataset_name, extracted_data)
             
             # 3. Save extracted data as JSON
+            extraction_progress.update_file_progress(source, dataset_name, filename, 0.9)
             logger.info(f"Saving extracted data to: {json_path}")
             with open(json_path, 'w') as f:
                 json.dump(extracted_data, f, indent=2)
@@ -397,7 +436,7 @@ def print_accumulated_data(data: Dict[str, Any], schema: Dict[str, Any], indent:
     # Print formatted JSON
     logger.info(json.dumps(filtered_data, indent=2))
 
-def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extractor: DataExtractor) -> Dict[str, Any]:
+def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extractor: DataExtractor, source: str = "", dataset_name: str = "", filename: str = "") -> Dict[str, Any]:
     """
     Extract structured data from a markdown file using the provided extractor
     
@@ -405,6 +444,9 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
         markdown_file: Path to the markdown file
         schema: JSON schema defining the structure of the data
         extractor: DataExtractor instance to use for extraction
+        source: Source of the dataset (for progress tracking)
+        dataset_name: Name of the dataset (for progress tracking)
+        filename: Name of the file being processed (for progress tracking)
         
     Returns:
         Extracted data as a dictionary
@@ -413,12 +455,31 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
     with open(markdown_file, 'r', encoding='utf-8') as f:
         content = f.read()
     
+    # Progress tracking enabled if source, dataset_name, and filename are provided
+    track_progress = source and dataset_name and filename
+    
+    if track_progress:
+        logger.info(f"Progress tracking enabled for {source}_{dataset_name}, file: {filename}")
+    
     # Split the content into chunks
     chunks = split_content_into_chunks(content)
+    total_chunks = len(chunks)
+    
+    logger.info(f"Split content into {total_chunks} chunks")
     
     # Process each chunk
     all_chunk_results = []
+    merged_data = {}
+    
     for i, chunk in enumerate(chunks):
+        logger.info(f"Processing chunk {i+1}/{total_chunks}")
+        
+        # Update progress if tracking enabled
+        if track_progress:
+            chunk_progress = 0.6 + (0.3 * (i / total_chunks))
+            logger.debug(f"Updating file progress: {source}, {dataset_name}, {filename}, {chunk_progress:.2f}")
+            extraction_progress.update_file_progress(source, dataset_name, filename, chunk_progress)
+        
         # Create a prompt for this chunk
         prompt = create_extraction_prompt_with_context(chunk, schema, i, len(chunks))
         
@@ -430,16 +491,45 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
             'chunk_index': i,
             'data': chunk_data
         })
+        
+        # If we have processed data from multiple chunks, do an intermediate merge
+        # and report the current state for progress tracking
+        if track_progress and i > 0 and i % 2 == 0:
+            logger.info(f"Performing intermediate merge after chunk {i+1}/{total_chunks}")
+            # Create a prompt for merging the current results
+            intermediate_merge_prompt = create_merge_prompt(all_chunk_results[:i+1], schema)
+            
+            # Get an intermediate merged result
+            intermediate_merged_data = extractor.merge_results(intermediate_merge_prompt, schema)
+            
+            # Update the merged data for progress tracking
+            logger.debug(f"Updating merged data for: {source}, {dataset_name}")
+            extraction_progress.update_merged_data(source, dataset_name, intermediate_merged_data)
     
     # If there's only one chunk, return its data
     if len(all_chunk_results) == 1:
-        return all_chunk_results[0]['data'].get('data', {})
+        logger.info("Only one chunk processed, returning its data directly")
+        result_data = all_chunk_results[0]['data'].get('data', {})
+        
+        # Update the merged data for progress tracking
+        if track_progress:
+            logger.debug(f"Updating final merged data for: {source}, {dataset_name}")
+            extraction_progress.update_merged_data(source, dataset_name, result_data)
+            
+        return result_data
     
-    # Create a prompt for merging the results
+    # Create a prompt for merging all the results
+    logger.info(f"Creating final merge prompt for {len(all_chunk_results)} chunks")
     merge_prompt = create_merge_prompt(all_chunk_results, schema)
     
     # Get the merged result from the LLM
+    logger.info("Getting final merged result from LLM")
     merged_data = extractor.merge_results(merge_prompt, schema)
+    
+    # Update the merged data for progress tracking
+    if track_progress:
+        logger.debug(f"Updating final merged data for: {source}, {dataset_name}")
+        extraction_progress.update_merged_data(source, dataset_name, merged_data)
     
     return merged_data
 
