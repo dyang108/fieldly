@@ -125,6 +125,7 @@ class Config:
         self.DEFAULT_MAX_TOKENS: int = 4000
         self.MAX_CHUNK_SIZE: int = 8000
         self.MIN_CHUNK_SIZE: int = 100
+        self.DATA_DIR: str = os.getenv('DATA_DIR', '.data')
 
 # Create a singleton instance
 config = Config() 

@@ -1,18 +1,10 @@
 #!/usr/bin/env python3
-# IMPORTANT: Eventlet monkey patching must happen before any other imports
-import eventlet
-# Check if already patched to avoid issues
-if not getattr(eventlet, 'already_patched', False):
-    eventlet.monkey_patch()
-    setattr(eventlet, 'already_patched', True)
-
+# No need for eventlet monkey patching anymore
 import os
 import logging
 from typing import Optional, Dict, Any, Union, List, cast
 from flask import Flask, request, jsonify, send_from_directory, Response, send_file
-from flask_socketio import SocketIO, emit, disconnect, join_room, leave_room, rooms, close_room
 from flask_cors import CORS
-import collections
 import json
 import time
 from pathlib import Path
@@ -32,10 +24,6 @@ from storage import create_storage
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
-# Increase engineio logging
-engineio_logger = logging.getLogger('engineio')
-engineio_logger.setLevel(logging.DEBUG)
-
 # Create Flask app
 app: Flask = Flask(__name__,
     static_folder='frontend/dist',
@@ -51,25 +39,6 @@ CORS(app, resources={
         "allow_headers": ["Content-Type", "Authorization"]
     }
 })
-
-# Initialize SocketIO with eventlet for better WebSocket support
-socketio = SocketIO(
-    app, 
-    cors_allowed_origins=["http://localhost:5173", "http://localhost:5000"], 
-    logger=True, 
-    engineio_logger=True,
-    async_mode='eventlet',     # Use eventlet for better WebSocket support
-    ping_timeout=60,           # Increase timeout
-    ping_interval=25,          # Reduce ping interval
-    max_http_buffer_size=5 * 1024 * 1024,  # Set max buffer size to 5MB
-    websocket_transport_options={
-        'check_origin': lambda origin: True,  # More permissive origin checking
-    },
-    always_connect=True,       # Always establish a connection even if there are errors
-)
-
-# Initialize extraction progress module with socketio
-extraction_progress.init_socketio(socketio)
 
 # Load configuration from environment variables
 app.config.update(
@@ -101,156 +70,12 @@ init_db(app.config['DATABASE_URL'], drop_first=False)
 # Register blueprints
 register_blueprints(app)
 
-# Keep track of clients in rooms
-room_clients = collections.defaultdict(set)
-
-# Handle WebSocket errors
-@socketio.on_error()
-def error_handler(e):
-    """Handle errors in SocketIO events"""
-    logger.error(f"SocketIO error: {str(e)}", exc_info=True)
-    if request.sid:
-        emit('error', {'message': f'An error occurred: {str(e)}'}, to=request.sid)
-
 # Handle general Flask errors
 @app.errorhandler(Exception)
 def handle_exception(e):
     """Handle general Flask exceptions"""
     logger.error(f"Flask exception: {str(e)}", exc_info=True)
     return jsonify({'error': str(e)}), 500
-
-# Socket.IO event handlers
-@socketio.on('connect')
-def handle_connect():
-    """Handle client connection"""
-    logger.info(f"Client connected: {request.sid}")
-    emit('connection_established', {'status': 'connected', 'sid': request.sid})
-
-@socketio.on('disconnect')
-def handle_disconnect(reason=None):
-    """
-    Handle client disconnection
-    
-    Args:
-        reason: The reason for disconnection (provided by Socket.IO)
-    """
-    client_sid = request.sid
-    logger.info(f"Client disconnected: {client_sid}, reason: {reason}")
-    
-    # Find rooms this client was in
-    client_rooms = []
-    for room, clients in room_clients.items():
-        if client_sid in clients:
-            client_rooms.append(room)
-            clients.remove(client_sid)
-    
-    # Check if any rooms are now empty and clean up extraction state
-    for room in client_rooms:
-        if not room_clients[room]:
-            logger.info(f"Room {room} is now empty, cleaning up extraction state")
-            # Parse room name to get source and dataset_name
-            try:
-                source, dataset_name = room.split('_', 1)
-                current_state = extraction_progress.get_extraction_state(source, dataset_name)
-                
-                # Only clean up if extraction is complete or failed
-                if current_state and current_state.get('status') in ['completed', 'failed']:
-                    logger.info(f"Cleaning up extraction state for {room}")
-                    extraction_progress.clear_extraction_state(source, dataset_name)
-                    # Close the room
-                    close_room(room)
-                    # Remove the room from our tracking
-                    del room_clients[room]
-            except Exception as e:
-                logger.error(f"Error cleaning up room {room}: {str(e)}", exc_info=True)
-
-@socketio.on('join_extraction_room')
-def handle_join_room(data):
-    """
-    Join a room for a specific dataset extraction process
-    
-    Args:
-        data: Dictionary containing dataset name and source
-    """
-    try:
-        dataset_name = data.get('dataset_name')
-        source = data.get('source')
-        
-        if not dataset_name or not source:
-            emit('error', {'message': 'Dataset name and source are required'})
-            return
-        
-        room = f"{source}_{dataset_name}"
-        
-        # Join the socket.io room
-        join_room(room)
-        # Track the client in this room
-        room_clients[room].add(request.sid)
-        
-        logger.info(f"Client {request.sid} joined room: {room} (clients: {len(room_clients[room])})")
-        
-        # Get the current extraction state if available
-        current_state = extraction_progress.get_extraction_state(source, dataset_name)
-        
-        # Send current state if available
-        if current_state:
-            logger.info(f"Sending current extraction state for {room}: {current_state['status']}")
-            emit('extraction_state', current_state)
-        else:
-            logger.info(f"No extraction state found for {room}, sending idle state")
-            emit('extraction_state', {
-                'status': 'idle',
-                'total_files': 0,
-                'processed_files': 0,
-                'current_file': '',
-                'merged_data': {}
-            })
-        
-        # Acknowledge joining the room
-        emit('room_joined', {'room': room})
-    except Exception as e:
-        logger.error(f"Error in handle_join_room: {str(e)}", exc_info=True)
-        emit('error', {'message': f'Error joining room: {str(e)}'})
-
-@socketio.on('leave_extraction_room')
-def handle_leave_room(data):
-    """
-    Leave a room for a specific dataset extraction process
-    
-    Args:
-        data: Dictionary containing dataset name and source
-    """
-    try:
-        dataset_name = data.get('dataset_name')
-        source = data.get('source')
-        
-        if not dataset_name or not source:
-            emit('error', {'message': 'Dataset name and source are required'})
-            return
-        
-        room = f"{source}_{dataset_name}"
-        
-        # Leave the socket.io room
-        leave_room(room)
-        # Remove client from our tracking
-        if request.sid in room_clients[room]:
-            room_clients[room].remove(request.sid)
-        
-        logger.info(f"Client {request.sid} left room: {room} (clients left: {len(room_clients[room])})")
-        
-        # If room is now empty, clean up
-        if not room_clients[room] and extraction_progress.get_extraction_state(source, dataset_name):
-            current_state = extraction_progress.get_extraction_state(source, dataset_name)
-            # Only clean up if extraction is complete or failed
-            if current_state and current_state.get('status') in ['completed', 'failed']:
-                logger.info(f"Room {room} is now empty, cleaning up extraction state")
-                extraction_progress.clear_extraction_state(source, dataset_name)
-        
-        # Acknowledge leaving the room
-        emit('room_left', {'room': room})
-    except Exception as e:
-        logger.error(f"Error in handle_leave_room: {str(e)}", exc_info=True)
-        emit('error', {'message': f'Error leaving room: {str(e)}'})
 
 # Serve the React app root
 @app.route('/')
@@ -274,39 +99,6 @@ def serve(path: str) -> Response:
     # Otherwise, serve index.html for all non-API routes to enable client-side routing
     # This handles routes like /dataset/*, /extraction-progress/*, etc.
     return send_from_directory(app.static_folder, 'index.html')
-
-# New API endpoint to check if an extraction room is active
-@app.route('/api/extraction-room-status/<source>/<dataset_name>', methods=['GET'])
-def check_extraction_room_status(source: str, dataset_name: str):
-    """Check if an extraction room is active on the server
-
-    Args:
-        source: The source of the dataset
-        dataset_name: The name of the dataset
-
-    Returns:
-        JSON response with the room status
-    """
-    try:
-        # Get the extraction state for the room
-        state = extraction_progress.get_extraction_state(source, dataset_name)
-        
-        room_status = {
-            'active': state is not None,
-            'status': state['status'] if state else 'no_session',
-            'room': f"{source}_{dataset_name}"
-        }
-        
-        logger.info(f"Checked room status for {source}_{dataset_name}: {room_status}")
-        return jsonify(room_status)
-    except Exception as e:
-        logger.error(f"Error checking room status: {str(e)}", exc_info=True)
-        return jsonify({
-            'active': False,
-            'status': 'error',
-            'message': str(e),
-            'room': f"{source}_{dataset_name}"
-        }), 500
 
 # Add the ping endpoint for server reachability checks
 @app.route('/api/ping', methods=['GET'])
@@ -540,9 +332,6 @@ def check_extraction_progress(source: str, dataset_name: str):
         JSON response with active status and additional info
     """
     try:
-        # Get extraction state from extraction_progress module
-        state = extraction_progress.get_extraction_state(source, dataset_name)
-        
         # Check if there's an extraction record in the database
         from db import db, ExtractionProgress
         with db.get_session() as session:
@@ -553,15 +342,21 @@ def check_extraction_progress(source: str, dataset_name: str):
             ).order_by(ExtractionProgress.id.desc()).first()
             
             has_extraction_record = extraction_record is not None
+            
+            # Get the most recent record regardless of status
+            most_recent = session.query(ExtractionProgress).filter_by(
+                source=source,
+                dataset_name=dataset_name
+            ).order_by(ExtractionProgress.id.desc()).first()
         
         # Determine if there's an active extraction
-        is_active = state is not None or has_extraction_record
+        is_active = has_extraction_record
         
         response = {
             'active': is_active,
             'source': source,
             'dataset_name': dataset_name,
-            'state': state if state else None,
+            'state': most_recent.to_dict() if most_recent else None,
             'has_db_record': has_extraction_record
         }
         
@@ -578,12 +373,9 @@ def check_extraction_progress(source: str, dataset_name: str):
         }), 500
 
 if __name__ == '__main__':
-    # Use eventlet's WSGI server when running directly
-    socketio.run(
-        app, 
+    # Use regular Flask run instead of socketio.run
+    app.run(
         debug=True,
         host='0.0.0.0',
-        port=5000,
-        use_reloader=True,
-        allow_unsafe_werkzeug=False  # Not needed with eventlet
+        port=5000
     ) 

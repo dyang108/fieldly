@@ -13,11 +13,12 @@ from db import db, Schema, DatasetSchemaMapping, ExtractionProgress
 from storage import create_storage, Storage
 from ai import create_schema_generator, create_llm_extractor
 from ai.extractor import DataExtractor
+from utils import extraction_progress
 from constants import (
     STORAGE_TYPE, LOCAL_STORAGE_PATH, S3_BUCKET_NAME, AWS_ACCESS_KEY_ID,
     AWS_SECRET_ACCESS_KEY, AWS_REGION, USE_LOCAL_MODEL, LLM_PROVIDER,
     DEEPSEEK_API_KEY, OPENAI_API_KEY, ANTHROPIC_API_KEY, MODEL_CONFIGS,
-    DEFAULT_LLM_PROVIDER, MAX_CHUNK_SIZE, DEFAULT_TEMPERATURE
+    DEFAULT_LLM_PROVIDER, MAX_CHUNK_SIZE, DEFAULT_TEMPERATURE, DATA_DIR
 )
 
 logger = logging.getLogger(__name__)
@@ -104,7 +105,6 @@ def extract_dataset(source: str, dataset_name: str) -> Tuple[Response, int]:
     """
     session = db.get_session()
     schema_data: Optional[Dict[str, Any]] = None
-    extraction_progress_record = None
     
     # Get schema from request JSON if provided
     if request.is_json:
@@ -112,13 +112,10 @@ def extract_dataset(source: str, dataset_name: str) -> Tuple[Response, int]:
         logger.info(f"Using schema from request")
         
     try:
-        from ai.task_manager import TaskManager
-        task_manager = TaskManager.get_instance()
-        
         logger.info(f"Starting extraction for dataset: {dataset_name} (source: {source})")
         
         # Check if an extraction is already running for this dataset
-        if task_manager.is_extraction_running(source, dataset_name):
+        if extraction_progress.is_extraction_active(source, dataset_name):
             logger.warning(f"Extraction already running for {source}/{dataset_name}")
             return jsonify({
                 'warning': f'Extraction already in progress for {dataset_name}',
@@ -171,7 +168,7 @@ def extract_dataset(source: str, dataset_name: str) -> Tuple[Response, int]:
         logger.info(f"Found {len(files)} files in dataset")
         
         # Create output directory
-        output_dir = f"{current_app.config['DATA_DIR']}/extracted/{source}/{dataset_name}"
+        output_dir = f"{DATA_DIR}/extracted/{source}/{dataset_name}"
         os.makedirs(output_dir, exist_ok=True)
         logger.info(f"Created output directory: {output_dir}")
         
@@ -184,43 +181,26 @@ def extract_dataset(source: str, dataset_name: str) -> Tuple[Response, int]:
                 'error': f'No PDF files found in dataset {dataset_name}'
             }), 404
         
-        # Create a new extraction progress record
-        extraction_progress_record = ExtractionProgress(
-            dataset_name=dataset_name,
-            source=source,
-            status='starting',
-            total_files=len(pdf_files),
-            processed_files=0,
-            start_time=datetime.now()
-        )
-        # Set files list using setter method
-        extraction_progress_record.set_files(pdf_files)
+        # Create a new extraction progress record and get its ID
+        extraction_progress_id = extraction_progress.start_extraction(source, dataset_name, pdf_files)
         
-        session.add(extraction_progress_record)
-        session.commit()
-        extraction_progress_id = extraction_progress_record.id
+        # Store the schema
+        with db.get_session() as session:
+            extraction_record = session.query(ExtractionProgress).get(extraction_progress_id)
+            if extraction_record and schema_data:
+                extraction_record.schema = json.dumps(schema_data, indent=2) if isinstance(schema_data, dict) else schema_data
+                session.commit()
         
         logger.info(f"Created extraction progress record with ID {extraction_progress_id}")
         
-        # Create task info for the extraction
-        task_info = {
-            'extraction_progress_id': extraction_progress_id,
-            'current_file_index': 0,
-            'total_files': len(pdf_files),
-            'files': pdf_files,
-            'schema': schema_data,
-            'output_dir': output_dir,
-            'provider': provider,
-            'model': model,
-            'use_api': use_api,
-            'temperature': temperature,
-            'status': 'starting',
-            'paused': False,
-            'callback': lambda task_info: handle_dataset_extraction(task_info)
-        }
-        
-        # Register the extraction with TaskManager
-        task_manager.register_extraction(source, dataset_name, task_info)
+        # Start extraction process in a separate thread
+        import threading
+        extraction_thread = threading.Thread(
+            target=handle_dataset_extraction,
+            args=(extraction_progress_id, source, dataset_name, pdf_files, schema_data, output_dir, provider, model, use_api, temperature),
+            daemon=True
+        )
+        extraction_thread.start()
         
         # Return success response with extraction_progress_id
         return jsonify({
@@ -236,81 +216,55 @@ def extract_dataset(source: str, dataset_name: str) -> Tuple[Response, int]:
     except Exception as e:
         logger.error(f"Error starting extraction process: {str(e)}", exc_info=True)
         
-        # Mark extraction as failed in the database
-        if extraction_progress_record:
-            extraction_progress_record.status = 'failed'
-            extraction_progress_record.message = f"Error starting extraction process: {str(e)}"
-            extraction_progress_record.end_time = datetime.now()
-            if extraction_progress_record.start_time:
-                try:
-                    extraction_progress_record.duration = (
-                        datetime.now() - extraction_progress_record.start_time
-                    ).total_seconds()
-                except:
-                    extraction_progress_record.duration = 0
-            session.commit()
+        # Mark extraction as failed
+        extraction_progress.complete_extraction(source, dataset_name, False, f"Error starting extraction process: {str(e)}")
         
         return jsonify({'error': str(e)}), 500
     finally:
         db.close_session(session)
 
-def handle_dataset_extraction(task_info):
+def handle_dataset_extraction(extraction_progress_id, source, dataset_name, files, schema, output_dir, provider, model, use_api, temperature):
     """
     Process all files in a dataset extraction task
     
-    This function is called by the TaskManager as a callback
+    This function is called as a background thread to process files
     """
     try:
-        logger.info(f"Starting dataset extraction task with {len(task_info['files'])} files")
-        
-        # Get variables from task_info
-        extraction_progress_id = task_info['extraction_progress_id']
-        source = task_info.get('source')
-        dataset_name = task_info.get('dataset_name')
-        files = task_info['files']
-        schema = task_info['schema']
-        output_dir = task_info['output_dir']
-        provider = task_info['provider']
-        model = task_info['model']
-        use_api = task_info['use_api']
-        temperature = task_info['temperature']
+        logger.info(f"Starting dataset extraction task with {len(files)} files")
         
         # Update the extraction progress record status
-        with db.get_session() as session:
-            extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-            if extraction_progress_record:
-                extraction_progress_record.status = 'in_progress'
-                extraction_progress_record.message = 'Processing files'
-                session.commit()
+        extraction_progress.update_extraction_progress(
+            source, 
+            dataset_name, 
+            {
+                'status': 'in_progress',
+                'message': 'Processing files'
+            }
+        )
         
         # Process each file
         for i, filename in enumerate(files):
-            # Skip files already processed if the task was resumed
-            if i < task_info.get('current_file_index', 0):
-                continue
-                
-            # Update current file index in task_info
-            task_info['current_file_index'] = i
+            # Check if extraction has been paused or cancelled
+            current_status = extraction_progress.get_extraction_status(source, dataset_name)
             
-            # Check if task has been paused
-            if task_info.get('paused', False):
-                logger.info(f"Extraction task paused at file {i+1}/{len(files)}")
-                # Update status in the database
-                with db.get_session() as session:
-                    extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-                    if extraction_progress_record:
-                        extraction_progress_record.status = 'paused'
-                        extraction_progress_record.message = 'Extraction paused by user'
-                        session.commit()
+            if not current_status or current_status == 'cancelled':
+                logger.info(f"Extraction cancelled for {source}/{dataset_name}")
                 return
             
-            # Update the extraction progress record
-            with db.get_session() as session:
-                extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-                if extraction_progress_record:
-                    extraction_progress_record.current_file = filename
-                    extraction_progress_record.file_progress = 0
-                    session.commit()
+            if current_status == 'paused':
+                logger.info(f"Extraction paused for {source}/{dataset_name} at file {i+1}/{len(files)}")
+                return
+            
+            # Update the current file information
+            extraction_progress.update_extraction_progress(
+                source, 
+                dataset_name, 
+                {
+                    'current_file': filename,
+                    'current_file_index': i,
+                    'file_progress': 0
+                }
+            )
             
             logger.info(f"Processing file {i+1}/{len(files)}: {filename}")
             
@@ -319,84 +273,51 @@ def handle_dataset_extraction(task_info):
                 process_file(source, dataset_name, filename, output_dir, schema, None, provider, model, use_api, temperature)
                 
                 # Update processed files count
-                with db.get_session() as session:
-                    extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-                    if extraction_progress_record:
-                        extraction_progress_record.processed_files += 1
-                        session.commit()
-                        
+                extraction_progress.update_extraction_progress(
+                    source, 
+                    dataset_name, 
+                    {
+                        'processed_files': i + 1
+                    }
+                )
+                
             except Exception as e:
                 logger.error(f"Error processing file {filename}: {str(e)}", exc_info=True)
                 # Continue with the next file despite errors
         
-        # Complete the extraction in the database
-        with db.get_session() as session:
-            extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-            if extraction_progress_record:
-                extraction_progress_record.status = 'completed'
-                extraction_progress_record.message = f"Successfully processed {len(files)} files"
-                extraction_progress_record.end_time = datetime.now()
-                if extraction_progress_record.start_time:
-                    try:
-                        extraction_progress_record.duration = (
-                            datetime.now() - extraction_progress_record.start_time
-                        ).total_seconds()
-                    except:
-                        pass
-                session.commit()
-                
+        # Complete the extraction
+        extraction_progress.complete_extraction(
+            source, 
+            dataset_name, 
+            True, 
+            f"Successfully processed {len(files)} files"
+        )
+        
         logger.info(f"Completed dataset extraction task with {len(files)} files")
     except Exception as e:
         logger.error(f"Error in dataset extraction task: {str(e)}", exc_info=True)
         
-        # Mark extraction as failed in the database
-        with db.get_session() as session:
-            extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-            if extraction_progress_record:
-                extraction_progress_record.status = 'failed'
-                extraction_progress_record.message = f"Error in extraction task: {str(e)}"
-                extraction_progress_record.end_time = datetime.now()
-                if extraction_progress_record.start_time:
-                    try:
-                        extraction_progress_record.duration = (
-                            datetime.now() - extraction_progress_record.start_time
-                        ).total_seconds()
-                    except:
-                        pass
-                session.commit()
+        # Mark extraction as failed
+        extraction_progress.complete_extraction(
+            source, 
+            dataset_name, 
+            False, 
+            f"Error in extraction task: {str(e)}"
+        )
         
         raise
 
 def process_file(source, dataset_name, filename, output_dir, schema=None, existing_schema_id=None, provider=None, model=None, use_api=None, temperature=None):
     """Process a single file from a dataset by converting it to markdown and extracting data"""
     try:
-        from ai.task_manager import TaskManager
-        
-        # Get TaskManager instance
-        task_manager = TaskManager.get_instance()
-        
         session = db.get_session()
         
-        # Create a new extraction progress record
-        extraction_progress_record = ExtractionProgress(
-            dataset_name=dataset_name,
-            source=source,
-            status='starting',
-            message='Initializing extraction process',
-            total_files=1,
-            processed_files=0,
-            start_time=datetime.now()
+        # Start the extraction process for a single file
+        extraction_progress_id = extraction_progress.start_extraction(
+            source, 
+            dataset_name, 
+            [filename]
         )
-        # Set JSON fields using proper setter methods
-        extraction_progress_record.set_files([filename])
-        extraction_progress_record.set_merged_data({})
-        extraction_progress_record.set_merge_reasoning_history([])
-        
-        session.add(extraction_progress_record)
-        session.commit()
-        
-        # Get the progress record ID
-        extraction_progress_id = extraction_progress_record.id
         
         logger.info(f"Created extraction progress record with ID: {extraction_progress_id}")
         
@@ -421,13 +342,18 @@ def process_file(source, dataset_name, filename, output_dir, schema=None, existi
         json_path = output_dir / f"{base_filename}.json"
         
         # Update progress
-        extraction_progress_record.status = 'in_progress'
-        extraction_progress_record.message = 'Converting PDF to Markdown'
-        extraction_progress_record.current_file = filename
-        session.commit()
+        extraction_progress.update_extraction_progress(
+            source, 
+            dataset_name, 
+            {
+                'status': 'in_progress',
+                'message': 'Converting PDF to Markdown',
+                'current_file': filename
+            }
+        )
         
         # Save the file from storage to a temporary location for processing
-        temp_file_path = Path(current_app.config['DATA_DIR']) / 'temp' / filename
+        temp_file_path = Path(DATA_DIR) / 'temp' / filename
         os.makedirs(os.path.dirname(temp_file_path), exist_ok=True)
         
         with open(temp_file_path, 'wb') as f:
@@ -437,14 +363,24 @@ def process_file(source, dataset_name, filename, output_dir, schema=None, existi
         # 1. Convert PDF to Markdown if needed
         if filename.lower().endswith('.pdf') and not md_path.exists():
             logger.info(f"Converting PDF to Markdown: {temp_file_path} -> {md_path}")
-            extraction_progress_record.file_progress = 0.3
-            session.commit()
+            extraction_progress.update_extraction_progress(
+                source, 
+                dataset_name, 
+                {
+                    'file_progress': 0.3
+                }
+            )
             
             convert_pdf_to_markdown(str(temp_file_path), str(md_path))
         else:
             # If not a PDF or markdown already exists, copy the file
-            extraction_progress_record.file_progress = 0.3
-            session.commit()
+            extraction_progress.update_extraction_progress(
+                source, 
+                dataset_name, 
+                {
+                    'file_progress': 0.3
+                }
+            )
             
             if not md_path.exists():
                 # If the file is already in markdown format, just copy it
@@ -455,9 +391,14 @@ def process_file(source, dataset_name, filename, output_dir, schema=None, existi
         os.remove(temp_file_path)
         
         # Update progress
-        extraction_progress_record.status = 'in_progress'
-        extraction_progress_record.message = 'Preparing schema for extraction'
-        session.commit()
+        extraction_progress.update_extraction_progress(
+            source, 
+            dataset_name, 
+            {
+                'status': 'in_progress',
+                'message': 'Preparing schema for extraction'
+            }
+        )
         
         # Get or create schema
         if schema:
@@ -478,61 +419,49 @@ def process_file(source, dataset_name, filename, output_dir, schema=None, existi
         if not schema:
             raise ValueError("Empty schema provided")
         
-        # Set up the LLM extractor
-        extraction_progress_record.status = 'in_progress'
-        extraction_progress_record.message = 'Initializing LLM extractor'
-        extraction_progress_record.file_progress = 0.5
-        session.commit()
+        # Update progress
+        extraction_progress.update_extraction_progress(
+            source, 
+            dataset_name, 
+            {
+                'status': 'in_progress',
+                'message': 'Creating extractor',
+                'file_progress': 0.5
+            }
+        )
         
-        logger.info(f"Setting up LLM extractor with provider={provider}")
+        # Get extractor config
+        config = {}
+        if provider:
+            config['provider'] = provider
+        if model:
+            config['model'] = model
+        if use_api is not None:
+            config['use_api'] = use_api
+        if temperature is not None:
+            config['temperature'] = temperature
+            
+        # Create a data extractor
+        extractor = create_llm_extractor(config)
         
-        # Configure the extractor
-        extractor_config = {
-            'provider': provider,
-            'use_api': use_api,
-            'model': model,
-            'temperature': temperature
-        }
+        # Update progress
+        extraction_progress.update_extraction_progress(
+            source, 
+            dataset_name, 
+            {
+                'status': 'in_progress',
+                'message': 'Starting extraction process',
+                'file_progress': 0.6
+            }
+        )
         
-        if use_api:
-            # API keys for different providers
-            if provider == 'deepseek':
-                extractor_config['api_key'] = current_app.config.get('DEEPSEEK_API_KEY')
-                extractor_config['api_url'] = current_app.config.get('DEEPSEEK_API_URL')
-            elif provider == 'openai':
-                extractor_config['api_key'] = current_app.config.get('OPENAI_API_KEY')
-                extractor_config['api_url'] = current_app.config.get('OPENAI_API_URL')
-            elif provider == 'anthropic':
-                extractor_config['api_key'] = current_app.config.get('ANTHROPIC_API_KEY')
-                extractor_config['api_url'] = current_app.config.get('ANTHROPIC_API_URL')
-        else:
-            # Local model configuration
-            extractor_config['model'] = current_app.config.get(f'{provider.upper()}_LOCAL_MODEL')
-            extractor_config['api_url'] = current_app.config.get(f'{provider.upper()}_LOCAL_API_URL')
-        
-        # Initialize the extractor using the factory function
-        extractor = create_llm_extractor(**extractor_config)
-        
-        # Update progress before starting extraction
-        extraction_progress_record.file_progress = 0.6
-        extraction_progress_record.message = 'Starting data extraction'
-        session.commit()
-        
-        logger.info(f"Starting data extraction from Markdown using schema")
-        
-        # Define the task info for TaskManager
-        extraction_key = (source, dataset_name)
-        task_info = {
-            'extraction_progress_id': extraction_progress_id,
-            'current_chunk': 0,
-            'total_chunks': 0,  # Will be updated during extraction
-            'status': 'in_progress',
-            'paused': False,
-            'callback': lambda task_info: handle_extraction_task(task_info, md_path, schema, extractor, source, dataset_name, filename, extraction_progress_id, json_path)
-        }
-        
-        # Register the extraction task
-        task_manager.register_extraction(source, dataset_name, task_info)
+        # Start the extraction task in a separate thread
+        extraction_thread = threading.Thread(
+            target=handle_extraction_task,
+            args=(extraction_progress_id, md_path, schema, extractor, source, dataset_name, filename, json_path),
+            daemon=True
+        )
+        extraction_thread.start()
         
         # Return the extraction progress record
         return {
@@ -546,15 +475,7 @@ def process_file(source, dataset_name, filename, output_dir, schema=None, existi
         logger.error(f"Error processing file {filename}: {str(e)}", exc_info=True)
         
         # Update extraction progress with error
-        if 'extraction_progress_record' in locals() and extraction_progress_record:
-            extraction_progress_record.status = 'failed'
-            extraction_progress_record.message = f"Error: {str(e)}"
-            extraction_progress_record.end_time = datetime.now()
-            if extraction_progress_record.start_time:
-                extraction_progress_record.duration = (
-                    datetime.now() - extraction_progress_record.start_time
-                ).total_seconds()
-            session.commit()
+        extraction_progress.complete_extraction(source, dataset_name, False, f"Error: {str(e)}")
         
         return {
             'filename': filename,
@@ -564,9 +485,9 @@ def process_file(source, dataset_name, filename, output_dir, schema=None, existi
     finally:
         db.close_session(session)
 
-def handle_extraction_task(task_info, md_path, schema, extractor, source, dataset_name, filename, extraction_progress_id, json_path):
+def handle_extraction_task(extraction_progress_id, md_path, schema, extractor, source, dataset_name, filename, json_path):
     """
-    Handle the actual extraction task from a TaskManager callback
+    Handle the actual extraction task in a background thread
     """
     try:
         logger.info(f"Starting extraction task for {filename}")
@@ -577,6 +498,9 @@ def handle_extraction_task(task_info, md_path, schema, extractor, source, datase
         # Save the extracted data to JSON
         with open(json_path, 'w') as f:
             json.dump(extracted_data, f, indent=2)
+            
+        # Mark the extraction as completed
+        extraction_progress.complete_extraction(source, dataset_name, True, f"Successfully processed {filename}")
         
         logger.info(f"Successfully completed extraction task for {filename}")
         return extracted_data
@@ -584,17 +508,7 @@ def handle_extraction_task(task_info, md_path, schema, extractor, source, datase
         logger.error(f"Error in extraction task for {filename}: {str(e)}", exc_info=True)
         
         # Update extraction progress with error
-        with db.get_session() as session:
-            extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-            if extraction_progress_record:
-                extraction_progress_record.status = 'failed'
-                extraction_progress_record.message = f"Error: {str(e)}"
-                extraction_progress_record.end_time = datetime.now()
-                if extraction_progress_record.start_time:
-                    extraction_progress_record.duration = (
-                        datetime.now() - extraction_progress_record.start_time
-                    ).total_seconds()
-                session.commit()
+        extraction_progress.complete_extraction(source, dataset_name, False, f"Error: {str(e)}")
         
         raise
 
@@ -749,11 +663,6 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
     Returns:
         Extracted data as a dictionary
     """
-    from ai.task_manager import TaskManager
-    
-    # Get the task manager instance
-    task_manager = TaskManager.get_instance()
-    
     # Read the markdown file
     with open(markdown_file, 'r', encoding='utf-8') as f:
         content = f.read()
@@ -772,64 +681,61 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
     
     # Update total chunks for this file if tracking progress
     if track_progress:
-        with db.get_session() as session:
-            extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-            extraction_progress_record.current_file_chunks = total_chunks
-            extraction_progress_record.total_chunks += total_chunks
-            extraction_progress_record.current_file_chunk = 0
-            session.commit()
+        extraction_progress.update_extraction_progress(
+            source,
+            dataset_name,
+            {
+                'current_file_chunks': total_chunks,
+                'total_chunks': total_chunks,  # For single file extractions
+                'current_file_chunk': 0,
+                'current_chunk': 0
+            }
+        )
     
     # Process each chunk
     all_chunk_results = []
     merged_data = {}
     merge_reasoning_history = []
+    current_chunk = 0
     
-    # Register this extraction with the task manager
-    extraction_key = (source, dataset_name)
-    task_info = {
-        'extraction_progress_id': extraction_progress_id,
-        'current_chunk': 0,
-        'total_chunks': total_chunks,
-        'status': 'in_progress',
-        'paused': False
-    }
-    
-    # If we're not starting a new extraction but continuing one,
-    # retrieve the previous task state from TaskManager
-    existing_task = task_manager.get_extraction_info(source, dataset_name)
-    if existing_task:
-        # Update with existing task info
-        last_processed_chunk = existing_task.get('current_chunk', 0)
-        task_info['current_chunk'] = last_processed_chunk
-        logger.info(f"Resuming extraction from chunk {last_processed_chunk}/{total_chunks}")
-    else:
-        # Register as new extraction
-        task_manager.register_extraction(source, dataset_name, task_info)
+    # Check if we need to resume from a specific chunk
+    if track_progress:
+        extraction_state = extraction_progress.get_extraction_state(source, dataset_name)
+        if extraction_state and extraction_state.get('status') == 'paused':
+            current_chunk = extraction_state.get('current_chunk', 0)
+            logger.info(f"Resuming extraction from chunk {current_chunk}/{total_chunks}")
     
     for i, chunk in enumerate(chunks):
         # Skip chunks that were already processed if resuming
-        if existing_task and i < task_info['current_chunk']:
+        if i < current_chunk:
             logger.info(f"Skipping already processed chunk {i+1}/{total_chunks}")
             continue
         
         logger.info(f"Processing chunk {i+1}/{total_chunks}")
         
-        # Update task info with current chunk
-        task_info['current_chunk'] = i
-        
-        # Check if extraction has been paused
-        if task_info.get('paused', False):
-            logger.info(f"Extraction paused at chunk {i+1}/{total_chunks}")
-            break
-        
-        # Update progress if tracking enabled
+        # Update current chunk in the database
         if track_progress:
-            with db.get_session() as session:
-                extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-                extraction_progress_record.file_progress = (i + 1) / total_chunks
-                extraction_progress_record.current_file_chunk = i + 1
-                extraction_progress_record.status = 'in_progress'
-                session.commit()
+            extraction_state = extraction_progress.get_extraction_state(source, dataset_name)
+            if extraction_state:
+                # Check if extraction has been paused or cancelled
+                if extraction_state.get('status') == 'paused':
+                    logger.info(f"Extraction paused at chunk {i+1}/{total_chunks}")
+                    break
+                elif extraction_state.get('status') == 'cancelled':
+                    logger.info(f"Extraction cancelled")
+                    break
+            
+            # Update progress
+            extraction_progress.update_extraction_progress(
+                source,
+                dataset_name,
+                {
+                    'current_chunk': i,
+                    'file_progress': (i + 1) / total_chunks,
+                    'current_file_chunk': i + 1,
+                    'status': 'in_progress'
+                }
+            )
         
         # Create a prompt for this chunk
         prompt = create_extraction_prompt_with_context(chunk, schema, i, len(chunks))
@@ -869,19 +775,19 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
             
             # Update the merged data for progress tracking
             logger.debug(f"Updating merged data for: {source}, {dataset_name}")
-            with db.get_session() as session:
-                extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-                extraction_progress_record.set_merged_data_with_reasoning(intermediate_merged_data, reasoning_entry)
-                session.commit()
+            extraction_progress.update_extraction_progress(
+                source,
+                dataset_name,
+                {
+                    'merged_data': intermediate_merged_data,
+                    'merge_reasoning_history': merge_reasoning_history
+                }
+            )
     
     # Check if extraction was completed or paused
-    if task_info.get('paused', False):
+    extraction_state = extraction_progress.get_extraction_state(source, dataset_name)
+    if extraction_state and extraction_state.get('status') == 'paused':
         logger.info(f"Extraction paused - saving current state")
-        with db.get_session() as session:
-            extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-            extraction_progress_record.status = 'paused'
-            extraction_progress_record.message = 'Extraction paused by user'
-            session.commit()
         return merged_data
     
     # If there's only one chunk, return its data
@@ -903,18 +809,14 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
         # Update the merged data for progress tracking
         if track_progress:
             logger.debug(f"Updating final merged data for: {source}, {dataset_name}")
-            with db.get_session() as session:
-                extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-                extraction_progress_record.set_merged_data_with_reasoning(result_data, reasoning_entry)
-                extraction_progress_record.status = 'completed'
-                extraction_progress_record.end_time = datetime.now()
-                extraction_progress_record.duration = (
-                    datetime.now() - extraction_progress_record.start_time
-                ).total_seconds()
-                session.commit()
-        
-        # Cleanup task from task manager
-        task_manager.cancel_extraction(source, dataset_name)
+            extraction_progress.update_extraction_progress(
+                source,
+                dataset_name,
+                {
+                    'merged_data': result_data,
+                    'merge_reasoning_history': merge_reasoning_history
+                }
+            )
         
         return result_data
     
@@ -941,21 +843,17 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
     }
     merge_reasoning_history.append(final_reasoning_entry)
     
-    # Update the merged data for progress tracking
+    # Save final result to database
     if track_progress:
-        logger.debug(f"Updating final merged data for: {source}, {dataset_name}")
-        with db.get_session() as session:
-            extraction_progress_record = session.query(ExtractionProgress).get(extraction_progress_id)
-            extraction_progress_record.set_merged_data_with_reasoning(merged_data, final_reasoning_entry)
-            extraction_progress_record.status = 'completed'
-            extraction_progress_record.end_time = datetime.now()
-            extraction_progress_record.duration = (
-                datetime.now() - extraction_progress_record.start_time
-            ).total_seconds()
-            session.commit()
-    
-    # Cleanup task from task manager
-    task_manager.cancel_extraction(source, dataset_name)
+        extraction_progress.update_extraction_progress(
+            source, 
+            dataset_name, 
+            {
+                'merged_data': merged_data,
+                'merge_reasoning_history': merge_reasoning_history,
+                'file_progress': 1.0
+            }
+        )
     
     return merged_data
 

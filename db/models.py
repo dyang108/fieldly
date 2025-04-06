@@ -54,89 +54,40 @@ class DatasetSchemaMapping(Base):
 
 
 class ExtractionProgress(Base):
-    """Model for tracking extraction progress"""
-    
+    """
+    Model for tracking extraction progress
+    """
     __tablename__ = 'extraction_progress'
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    
-    # Identification 
-    dataset_name: Mapped[str] = mapped_column(String, nullable=False)
-    source: Mapped[str] = mapped_column(String, nullable=False)  # 'local' or 's3'
-    
-    # Status information
-    status: Mapped[str] = mapped_column(String, nullable=False, default='in_progress')  # 'in_progress', 'completed', 'failed', 'interrupted'
-    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)  # For error messages or completion info
-    
-    # Files information
-    total_files: Mapped[int] = mapped_column(Integer, default=0)
-    processed_files: Mapped[int] = mapped_column(Integer, default=0)
-    current_file: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    file_progress: Mapped[float] = mapped_column(Float, default=0.0)  # 0.0 to 1.0
-    
-    # Chunk information
-    total_chunks: Mapped[int] = mapped_column(Integer, default=0)
-    processed_chunks: Mapped[int] = mapped_column(Integer, default=0)
-    current_file_chunks: Mapped[int] = mapped_column(Integer, default=0)
-    current_file_chunk: Mapped[int] = mapped_column(Integer, default=0)
-    
-    # Data storage
-    files: Mapped[str] = mapped_column(Text, default='[]')  # JSON list of files
-    merged_data: Mapped[str] = mapped_column(Text, default='{}')  # JSON object
-    merge_reasoning_history: Mapped[str] = mapped_column(Text, default='[]')  # JSON array of reasoning entries
-    
-    # Timestamps
-    start_time: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    dataset_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    source: Mapped[str] = mapped_column(String(50), nullable=False)
+    status: Mapped[str] = mapped_column(String(50), nullable=False)
+    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    total_files: Mapped[int] = mapped_column(Integer, nullable=False)
+    processed_files: Mapped[int] = mapped_column(Integer, nullable=False)
+    current_file: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    current_file_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Current file index in the files array
+    file_progress: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    current_file_chunks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    current_file_chunk: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    total_chunks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    current_chunk: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Current chunk being processed
+    processed_chunks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    files: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON list of files
+    merged_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON for merged data
+    merge_reasoning_history: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON for merge reasoning history
+    schema: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON schema for extraction
+    start_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=datetime.now)
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # In seconds
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+    duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    def __repr__(self):
+        return f"<ExtractionProgress(id={self.id}, dataset={self.dataset_name}, status={self.status})>"
     
-    def get_files(self) -> List[str]:
-        """Get the list of files from the JSON string"""
-        return json.loads(self.files if self.files else '[]')
-    
-    def set_files(self, files_list: List[str]) -> None:
-        """Set the files list"""
-        self.files = json.dumps(files_list)
-    
-    def get_merged_data(self) -> Dict[str, Any]:
-        """Get the merged data as a Python dictionary"""
-        return json.loads(self.merged_data if self.merged_data else '{}')
-    
-    def set_merged_data(self, data: Dict[str, Any]) -> None:
-        """Set the merged data"""
-        self.merged_data = json.dumps(data)
-    
-    def get_merge_reasoning_history(self) -> List[Dict[str, Any]]:
-        """Get merge reasoning history as a Python list"""
-        return json.loads(self.merge_reasoning_history if self.merge_reasoning_history else '[]')
-    
-    def set_merge_reasoning_history(self, history: List[Dict[str, Any]]) -> None:
-        """Set the merge reasoning history"""
-        self.merge_reasoning_history = json.dumps(history)
-    
-    def add_merge_reasoning(self, reasoning: Dict[str, Any]) -> None:
-        """Add a new reasoning entry to the history"""
-        history = self.get_merge_reasoning_history()
-        history.append(reasoning)
-        self.set_merge_reasoning_history(history)
-    
-    def set_merged_data_with_reasoning(self, merged_data: Dict[str, Any], reasoning_entry: Dict[str, Any]) -> None:
-        """
-        Update the merged data and add a reasoning entry to the history
-        
-        Args:
-            merged_data: The updated merged data
-            reasoning_entry: Information about the reasoning behind merge decisions
-        """
-        self.set_merged_data(merged_data)
-        self.add_merge_reasoning(reasoning_entry)
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert the model to a dictionary for API responses"""
-        return {
+    def to_dict(self):
+        result = {
             'id': self.id,
             'dataset_name': self.dataset_name,
             'source': self.source,
@@ -145,20 +96,76 @@ class ExtractionProgress(Base):
             'total_files': self.total_files,
             'processed_files': self.processed_files,
             'current_file': self.current_file,
+            'current_file_index': self.current_file_index,
             'file_progress': self.file_progress,
-            'total_chunks': self.total_chunks,
-            'processed_chunks': self.processed_chunks,
             'current_file_chunks': self.current_file_chunks,
             'current_file_chunk': self.current_file_chunk,
-            'files': self.get_files(),
-            'merged_data': self.get_merged_data(),
-            'merge_reasoning_history': self.get_merge_reasoning_history(),
-            'start_time': self.start_time.isoformat() if self.start_time else None,
-            'end_time': self.end_time.isoformat() if self.end_time else None,
-            'duration': self.duration,
-            'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'total_chunks': self.total_chunks,
+            'current_chunk': self.current_chunk,
+            'processed_chunks': self.processed_chunks
         }
+        
+        # Add timestamps if available
+        if self.start_time:
+            result['start_time'] = self.start_time.isoformat()
+        if self.end_time:
+            result['end_time'] = self.end_time.isoformat()
+        if self.updated_at:
+            result['updated_at'] = self.updated_at.isoformat()
+        if self.duration is not None:
+            result['duration'] = self.duration
+            
+        # Parse JSON fields
+        try:
+            if self.files:
+                result['files'] = json.loads(self.files)
+        except:
+            result['files'] = []
+            
+        try:
+            if self.merged_data:
+                result['merged_data'] = json.loads(self.merged_data)
+        except:
+            result['merged_data'] = {}
+            
+        try:
+            if self.merge_reasoning_history:
+                result['merge_reasoning_history'] = json.loads(self.merge_reasoning_history)
+        except:
+            result['merge_reasoning_history'] = []
+            
+        try:
+            if self.schema:
+                result['schema'] = json.loads(self.schema)
+        except:
+            result['schema'] = None
+            
+        return result
     
-    def __repr__(self) -> str:
-        return f"<ExtractionProgress(id={self.id}, dataset='{self.dataset_name}', source='{self.source}', status='{self.status}')>" 
+    def set_files(self, files_list):
+        """Set the files list as JSON"""
+        self.files = json.dumps(files_list)
+        
+    def set_merged_data(self, data):
+        """Set the merged data as JSON"""
+        self.merged_data = json.dumps(data)
+        
+    def set_merge_reasoning_history(self, history):
+        """Set the merge reasoning history as JSON"""
+        self.merge_reasoning_history = json.dumps(history)
+        
+    def set_merged_data_with_reasoning(self, merged_data, reasoning_entry):
+        """Update both merged data and add to reasoning history"""
+        # Update merged data
+        self.set_merged_data(merged_data)
+        
+        # Add reasoning to history
+        current_history = []
+        try:
+            if self.merge_reasoning_history:
+                current_history = json.loads(self.merge_reasoning_history)
+        except:
+            current_history = []
+            
+        current_history.append(reasoning_entry)
+        self.set_merge_reasoning_history(current_history) 

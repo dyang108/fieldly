@@ -64,3 +64,6 @@ DEFAULT_MAX_TOKENS: int = config.DEFAULT_MAX_TOKENS
 # Validation constants
 MAX_CHUNK_SIZE: int = config.MAX_CHUNK_SIZE
 MIN_CHUNK_SIZE: int = config.MIN_CHUNK_SIZE 
+
+# Data directory
+DATA_DIR: str = config.DATA_DIR

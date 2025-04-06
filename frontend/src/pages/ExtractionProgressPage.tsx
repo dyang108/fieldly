@@ -311,6 +311,7 @@ const ExtractionProgressPage: React.FC = () => {
     );
   }
   
+  console.log(progress);
   // Format merged data as string
   const formattedMergedData = Object.keys(progress.merged_data).length > 0
     ? JSON.stringify(progress.merged_data, null, 2)

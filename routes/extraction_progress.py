@@ -1,11 +1,14 @@
 import logging
 import time
+import threading
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple, cast
 from flask import Blueprint, request, jsonify, Response
 from sqlalchemy import desc
 
 from db import db, ExtractionProgress
+from utils import extraction_progress
+from routes.extractors import handle_dataset_extraction
 
 logger = logging.getLogger(__name__)
 
@@ -160,17 +163,14 @@ def check_active_extraction(source: str, dataset_name: str) -> Tuple[Response, i
         JSON response indicating whether an active extraction exists
     """
     try:
-        session = db.get_session()
-        active_progress = session.query(ExtractionProgress).filter_by(
-            source=source,
-            dataset_name=dataset_name,
-            status='in_progress'
-        ).first()
+        # Use the extraction_progress module to check for active extractions
+        is_active = extraction_progress.is_extraction_active(source, dataset_name)
         
-        if active_progress:
+        if is_active:
+            extraction_state = extraction_progress.get_extraction_state(source, dataset_name)
             return jsonify({
                 'active': True,
-                'extraction_progress': active_progress.to_dict()
+                'extraction_progress': extraction_state
             }), 200
         else:
             return jsonify({
@@ -179,8 +179,6 @@ def check_active_extraction(source: str, dataset_name: str) -> Tuple[Response, i
     except Exception as e:
         logger.error(f"Error checking active extraction: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
-    finally:
-        db.close_session(session)
 
 @extraction_progress_bp.route('/extraction-progress/list', methods=['GET'])
 def list_extraction_progress_new():
@@ -274,17 +272,14 @@ def update_extraction_progress(progress_id):
 def get_extraction_status(source, dataset_name):
     """Check if an extraction is currently running for a dataset."""
     try:
-        # Get the process running status from a global registry
-        # In a real implementation, this would check against a process registry
-        # or a database field that tracks active extractions
-        from ai.task_manager import TaskManager
-        
-        task_manager = TaskManager.get_instance()
-        is_running = task_manager.is_extraction_running(source, dataset_name)
-        
+        # Get the extraction status using our utility
+        is_running = extraction_progress.is_extraction_active(source, dataset_name)
+        extraction_state = extraction_progress.get_extraction_state(source, dataset_name)
+        print(extraction_state)
         return jsonify({
             'success': True,
-            'is_running': is_running
+            'is_running': is_running,
+            'extraction_info': extraction_state
         })
     except Exception as e:
         logger.exception(f"Error checking extraction status: {e}")
@@ -294,99 +289,114 @@ def get_extraction_status(source, dataset_name):
 def resume_extraction(source, dataset_name):
     """Resume a paused extraction process."""
     try:
-        from ai.task_manager import TaskManager
+        logger.info(f"Attempting to resume extraction for {source}/{dataset_name}")
         
-        task_manager = TaskManager.get_instance()
-        
-        # First, check if it's already running
-        if task_manager.is_extraction_running(source, dataset_name):
+        # Check if extraction is already active
+        if extraction_progress.is_extraction_active(source, dataset_name):
+            logger.warning(f"Extraction already running for {source}/{dataset_name}")
             return jsonify({
                 'success': False,
                 'error': 'Extraction is already running'
             }), 400
         
-        # Get the most recent extraction progress
+        # Find the paused extraction in the database
         with db.get_session() as session:
-            progress = session.query(ExtractionProgress).filter_by(
+            paused_extraction = session.query(ExtractionProgress).filter_by(
                 source=source,
-                dataset_name=dataset_name
+                dataset_name=dataset_name,
+                status='paused'
             ).order_by(desc(ExtractionProgress.start_time)).first()
             
-            if not progress:
-                return jsonify({'success': False, 'error': 'No extraction found to resume'}), 404
-            
-            # If extraction is already completed, don't resume
-            if progress.status == 'completed':
+            if not paused_extraction:
+                logger.warning(f"No paused extraction found for {source}/{dataset_name}")
                 return jsonify({
                     'success': False,
-                    'error': 'Extraction is already completed'
-                }), 400
-                
-            # Update the status to in_progress
-            progress.status = 'in_progress'
-            progress.message = 'Extraction resumed'
+                    'error': 'No paused extraction found to resume'
+                }), 404
+            
+            # Update status to in_progress
+            paused_extraction.status = 'in_progress'
+            paused_extraction.message = 'Extraction resumed'
+            paused_extraction.updated_at = datetime.now()
             session.commit()
+            
+            # Get the extraction data needed to resume
+            extraction_id = paused_extraction.id
+            files = paused_extraction.get_files()
+            schema = paused_extraction.get_schema()
+            current_file_index = paused_extraction.current_file_index or 0
+            
+            # Only pass the remaining files
+            remaining_files = files[current_file_index:]
+            logger.info(f"Resuming extraction with {len(remaining_files)} remaining files")
+            
+            # Extract output directory from message or construct it
+            import os
+            from flask import current_app
+            output_dir = f"{current_app.config['DATA_DIR']}/extracted/{source}/{dataset_name}"
+            os.makedirs(output_dir, exist_ok=True)
+            
+            logger.info(f"Successfully updated extraction status in database for {source}/{dataset_name}")
         
-        # Resume the extraction in the task manager
-        resumed = task_manager.resume_extraction(source, dataset_name)
+        # Start extraction process in a separate thread
+        extraction_thread = threading.Thread(
+            target=handle_dataset_extraction,
+            args=(extraction_id, source, dataset_name, remaining_files, schema, output_dir, None, None, None, None),
+            daemon=True
+        )
+        extraction_thread.start()
         
-        if resumed:
-            return jsonify({
-                'success': True,
-                'message': 'Extraction successfully resumed',
-                'status': 'in_progress'
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to resume extraction'
-            }), 500
+        return jsonify({
+            'success': True,
+            'message': 'Extraction successfully resumed',
+            'status': 'in_progress',
+            'extraction': extraction_progress.get_extraction_state(source, dataset_name)
+        })
+            
     except Exception as e:
         logger.exception(f"Error resuming extraction: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
 
 @extraction_progress_bp.route('/extraction-pause/<source>/<dataset_name>', methods=['POST'])
 def pause_extraction(source, dataset_name):
     """Pause a running extraction process."""
     try:
-        from ai.task_manager import TaskManager
+        logger.info(f"Attempting to pause extraction for {source}/{dataset_name}")
         
-        task_manager = TaskManager.get_instance()
-        
-        # First, check if it's running
-        if not task_manager.is_extraction_running(source, dataset_name):
+        # Check if an extraction is running
+        if not extraction_progress.is_extraction_active(source, dataset_name):
+            logger.warning(f"No active extraction found for {source}/{dataset_name}")
             return jsonify({
                 'success': False,
                 'error': 'No active extraction is running'
             }), 400
         
-        # Get the current extraction progress
-        with db.get_session() as session:
-            progress = session.query(ExtractionProgress).filter_by(
-                source=source,
-                dataset_name=dataset_name
-            ).order_by(desc(ExtractionProgress.start_time)).first()
+        # Update the extraction status in the database
+        # The extraction thread will check the status and stop when it sees 'paused'
+        extraction_progress.update_extraction_progress(
+            source, 
+            dataset_name, 
+            {
+                'status': 'paused',
+                'message': 'Extraction paused by user'
+            }
+        )
+        
+        logger.info(f"Successfully paused extraction for {source}/{dataset_name}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'Extraction successfully paused',
+            'status': 'paused',
+            'extraction': extraction_progress.get_extraction_state(source, dataset_name)
+        })
             
-            if progress:
-                # Update the status to paused
-                progress.status = 'paused'
-                progress.message = 'Extraction paused by user'
-                session.commit()
-        
-        # Pause the extraction in the task manager
-        paused = task_manager.pause_extraction(source, dataset_name)
-        
-        if paused:
-            return jsonify({
-                'success': True,
-                'message': 'Extraction successfully paused',
-                'status': 'paused'
-            })
-        else:
-            return jsonify({
-                'success': False,
-                'error': 'Failed to pause extraction'
-            }), 500
     except Exception as e:
         logger.exception(f"Error pausing extraction: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500 
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500 
