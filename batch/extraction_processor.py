@@ -251,6 +251,20 @@ def process_file(file_path: str, source: str, dataset_name: str, config: Dict[st
             print(f"[LLM Extraction] Content size ({len(content)}) is within MAX_CHUNK_SIZE, using single chunk")
             chunks = [content]
         
+        # Update extraction progress with chunk information
+        print(f"[LLM Extraction] Updating extraction progress with chunk information")
+        extraction_progress.update_extraction_progress(
+            source, 
+            dataset_name, 
+            {
+                'current_file': file_path,
+                'total_chunks': len(chunks),
+                'current_chunk': 0,
+                'file_progress': 0,
+                'message': f'Processing file {os.path.basename(file_path)}'
+            }
+        )
+        
         # Create a prompt for extraction
         print(f"[LLM Extraction] Creating extraction prompt template")
         prompt_template = """
@@ -315,12 +329,13 @@ Return only the JSON object, with no additional text or explanation.
             # Update extraction progress with chunk information
             print(f"\n[LLM Extraction] Processing chunk {i+1}/{len(chunks)}, size: {len(chunk)} characters")
             
+            # Update the current chunk being processed
             extraction_progress.update_extraction_progress(
                 source, 
                 dataset_name, 
                 {
                     'current_file': file_path,
-                    'file_progress': (i / len(chunks)) * 100,
+                    'current_chunk': i + 1,
                     'message': f'Processing chunk {i+1}/{len(chunks)} of {os.path.basename(file_path)}'
                 }
             )
@@ -346,10 +361,8 @@ Return only the JSON object, with no additional text or explanation.
                 dataset_name, 
                 {
                     'current_file': file_path,
-                    'file_progress': ((i + 0.5) / len(chunks)) * 100,
                     'current_chunk': i + 1,
-                    'total_chunks': len(chunks),
-                    'chunk_output': result  # Store the chunk output
+                    'message': f'Processed chunk {i+1}/{len(chunks)} of {os.path.basename(file_path)}'
                 }
             )
         
@@ -363,7 +376,6 @@ Return only the JSON object, with no additional text or explanation.
                 dataset_name, 
                 {
                     'current_file': file_path,
-                    'file_progress': 95,
                     'message': f'Merging results from {len(chunk_results)} chunks'
                 }
             )
@@ -384,7 +396,6 @@ Return only the JSON object, with no additional text or explanation.
                 dataset_name, 
                 {
                     'current_file': file_path,
-                    'file_progress': 100,
                     'message': f'Completed processing {os.path.basename(file_path)}',
                     'merge_explanation': merge_explanation
                 }
@@ -399,7 +410,6 @@ Return only the JSON object, with no additional text or explanation.
             extraction_progress_record = update_session.query(ExtractionProgress).get(extraction_progress_id)
             if extraction_progress_record:
                 extraction_progress_record.processed_files += 1
-                extraction_progress_record.file_progress = 100
                 update_session.commit()
                 print(f"[LLM Extraction] Extraction progress record updated")
         
@@ -442,7 +452,9 @@ def handle_dataset_extraction(extraction_progress_id, source, dataset_name, file
             dataset_name, 
             {
                 'status': 'in_progress',
-                'message': 'Processing files'
+                'message': 'Processing files',
+                'total_chunks': 0,  # Will be updated as files are processed
+                'current_chunk': 0
             }
         )
         

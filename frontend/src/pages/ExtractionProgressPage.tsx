@@ -13,7 +13,9 @@ import {
   Card,
   CardContent,
   IconButton,
-  Collapse
+  Collapse,
+  Container,
+  Grid
 } from '@mui/material';
 import {
   Refresh as RefreshIcon,
@@ -48,9 +50,7 @@ interface ExtractionProgress {
   current_file?: string;
   file_progress: number;
   total_chunks: number;
-  processed_chunks: number;
-  current_file_chunks: number;
-  current_file_chunk: number;
+  current_chunk: number;
   files: string[];
   merged_data: any;
   merge_reasoning_history: MergeReasoningEntry[];
@@ -269,6 +269,19 @@ const ExtractionProgressPage: React.FC = () => {
     );
   };
   
+  const calculateFileProgress = () => {
+    if (!progress) return 0;
+    
+    const { processed_files, total_files, current_chunk, total_chunks } = progress;
+    
+    // Calculate progress based on completed files and current chunk progress
+    const completedFilesProgress = (processed_files / total_files) * 100;
+    const currentChunkProgress = current_chunk ? (current_chunk / total_chunks) * 100 : 0;
+    
+    // Total progress is the sum of completed files progress and current chunk progress
+    return completedFilesProgress + (currentChunkProgress / total_files);
+  };
+  
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '50vh' }}>
@@ -322,7 +335,7 @@ const ExtractionProgressPage: React.FC = () => {
   const canPause = progress.status === 'in_progress' && progress.is_running;
   
   return (
-    <Box sx={{ mt: 3, mx: 'auto', maxWidth: '800px' }}>
+    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
         <Button 
           startIcon={<ArrowBackIcon />} 
@@ -432,10 +445,10 @@ const ExtractionProgressPage: React.FC = () => {
                   <strong>Files:</strong> {progress.processed_files} / {progress.total_files}
                 </Typography>
                 <Typography variant="body2">
-                  <strong>Current File:</strong> {progress.current_file || 'None'}
+                  <strong>Current File:</strong> {progress.current_file ? progress.current_file.split('/').pop() : 'None'}
                 </Typography>
                 <Typography variant="body2">
-                  <strong>Chunks:</strong> {progress.processed_chunks} / {progress.total_chunks}
+                  <strong>Chunks:</strong> {progress.current_chunk || 0} / {progress.total_chunks || 0}
                 </Typography>
                 {progress.message && (
                   <Typography variant="body2" sx={{ mt: 1 }}>
@@ -447,78 +460,76 @@ const ExtractionProgressPage: React.FC = () => {
           </Box>
         </Box>
         
-        {progress.status === 'in_progress' && (
-          <Box sx={{ mb: 3 }}>
-            <Typography variant="subtitle2" gutterBottom>
-              File Progress:
-            </Typography>
-            <LinearProgress 
-              variant="determinate"
-              value={progress.file_progress * 100}
-              sx={{ height: 10, borderRadius: 5 }}
-            />
-            <Typography variant="caption" color="text.secondary">
-              {progress.current_file_chunk} of {progress.current_file_chunks} chunks processed
-            </Typography>
-          </Box>
-        )}
-        
-        <Divider sx={{ my: 2 }} />
-        
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-          <Typography variant="subtitle1">
-            Merge Reasoning
+        <Box sx={{ mt: 3 }}>
+          <Typography variant="subtitle1" gutterBottom>
+            Overall Progress
           </Typography>
-          <Button 
-            size="small" 
-            variant="text" 
-            startIcon={showMergeReasoning ? <ExpandLess /> : <ExpandMore />} 
-            onClick={() => setShowMergeReasoning(!showMergeReasoning)}
-          >
-            {showMergeReasoning ? "Hide" : "Show"}
-          </Button>
+          <LinearProgress 
+            variant="determinate" 
+            value={calculateFileProgress()} 
+            sx={{ height: 10, borderRadius: 5 }}
+          />
+          <Typography variant="body2" sx={{ mt: 1, textAlign: 'right' }}>
+            {Math.round(calculateFileProgress())}%
+          </Typography>
         </Box>
-        
-        <Collapse in={showMergeReasoning}>
-          <Box 
-            sx={{ 
-              backgroundColor: 'background.paper', 
-              p: 2, 
-              borderRadius: 1,
-              maxHeight: '300px',
-              overflow: 'auto',
-              mb: 2
-            }}
-          >
-            {progress.merge_reasoning_history && progress.merge_reasoning_history.length > 0 ? (
-              progress.merge_reasoning_history.map(entry => formatReasoningEntry(entry))
-            ) : (
-              <Typography variant="body2" color="text.secondary">
-                No merge reasoning available yet.
-              </Typography>
-            )}
-          </Box>
-        </Collapse>
-        
-        <Typography variant="subtitle1" gutterBottom>
-          Merged Data Preview
+      </Paper>
+      
+      <Divider sx={{ my: 2 }} />
+      
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+        <Typography variant="subtitle1">
+          Merge Reasoning
         </Typography>
+        <Button 
+          size="small" 
+          variant="text" 
+          startIcon={showMergeReasoning ? <ExpandLess /> : <ExpandMore />} 
+          onClick={() => setShowMergeReasoning(!showMergeReasoning)}
+        >
+          {showMergeReasoning ? "Hide" : "Show"}
+        </Button>
+      </Box>
+      
+      <Collapse in={showMergeReasoning}>
         <Box 
           sx={{ 
             backgroundColor: 'background.paper', 
             p: 2, 
             borderRadius: 1,
-            maxHeight: '400px',
+            maxHeight: '300px',
             overflow: 'auto',
-            whiteSpace: 'pre-wrap',
-            fontFamily: 'monospace',
-            fontSize: '0.8rem'
+            mb: 2
           }}
         >
-          {formattedMergedData}
+          {progress.merge_reasoning_history && progress.merge_reasoning_history.length > 0 ? (
+            progress.merge_reasoning_history.map(entry => formatReasoningEntry(entry))
+          ) : (
+            <Typography variant="body2" color="text.secondary">
+              No merge reasoning available yet.
+            </Typography>
+          )}
         </Box>
-      </Paper>
-    </Box>
+      </Collapse>
+      
+      <Typography variant="subtitle1" gutterBottom>
+        Merged Data Preview
+      </Typography>
+      <Box 
+        sx={{ 
+          backgroundColor: 'background.paper', 
+          p: 2, 
+          borderRadius: 1,
+          maxHeight: '400px',
+          overflow: 'auto',
+          whiteSpace: 'pre-wrap',
+          fontFamily: 'monospace',
+          fontSize: '0.8rem'
+        }}
+      >
+        {formattedMergedData}
+      </Box>
+    </Container>
   );
 };
 

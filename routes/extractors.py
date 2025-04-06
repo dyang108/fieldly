@@ -574,18 +574,17 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
     
     logger.info(f"Split content into {total_chunks} chunks")
     
-    # Update total chunks for this file if tracking progress
-    if track_progress:
-        extraction_progress.update_extraction_progress(
-            source,
-            dataset_name,
-            {
-                'current_file_chunks': total_chunks,
-                'total_chunks': total_chunks,  # For single file extractions
-                'current_file_chunk': 0,
-                'current_chunk': 0
-            }
-        )
+    # Update extraction progress with initial chunk information
+    extraction_progress.update_extraction_progress(
+        source, 
+        dataset_name, 
+        {
+            'status': 'in_progress',
+            'message': 'Processing files',
+            'total_chunks': total_chunks,
+            'current_chunk': 0
+        }
+    )
     
     # Process each chunk
     all_chunk_results = []
@@ -620,15 +619,13 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
                     logger.info(f"Extraction cancelled")
                     break
             
-            # Update progress
+            # Update extraction progress with current chunk
             extraction_progress.update_extraction_progress(
-                source,
-                dataset_name,
+                source, 
+                dataset_name, 
                 {
-                    'current_chunk': i,
-                    'file_progress': (i + 1) / total_chunks,
-                    'current_file_chunk': i + 1,
-                    'status': 'in_progress'
+                    'current_chunk': i + 1,
+                    'message': f'Processing chunk {i+1}/{total_chunks}'
                 }
             )
         

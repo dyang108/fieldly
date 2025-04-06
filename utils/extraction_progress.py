@@ -130,7 +130,6 @@ def update_extraction_progress(
             - processed_files: Number of processed files
             - total_chunks: Total chunks for extraction
             - current_chunk: Current chunk being processed
-            - processed_chunks: Number of processed chunks
             - merged_data: Updated merged data (JSON serializable)
             - merge_reasoning_history: Updated reasoning history
             - schema: Updated schema
@@ -166,6 +165,17 @@ def update_extraction_progress(
                     extraction.files = json.dumps(value)
                 elif hasattr(extraction, field):
                     setattr(extraction, field, value)
+            
+            # Calculate file_progress if not explicitly set
+            if 'file_progress' not in update_data:
+                if (hasattr(extraction, 'current_chunk') and 
+                    hasattr(extraction, 'total_chunks') and 
+                    extraction.total_chunks is not None and 
+                    extraction.total_chunks > 0):
+                    # Calculate progress as (completed_files * chunks_per_file + current_chunks) / (total_files * chunks_per_file)
+                    total_chunks = extraction.total_chunks
+                    processed_chunks = (extraction.processed_files * (extraction.total_chunks / extraction.total_files)) + extraction.current_chunk
+                    extraction.file_progress = processed_chunks / total_chunks if total_chunks > 0 else 0
             
             # If status is changing to completed or failed, set end_time
             if 'status' in update_data and update_data['status'] in ['completed', 'failed']:

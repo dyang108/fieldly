@@ -60,95 +60,48 @@ class ExtractionProgress(Base):
     __tablename__ = 'extraction_progress'
     
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    dataset_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    source: Mapped[str] = mapped_column(String(50), nullable=False)
-    status: Mapped[str] = mapped_column(String(50), nullable=False)
-    message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source: Mapped[str] = mapped_column(String, nullable=False)
+    dataset_name: Mapped[str] = mapped_column(String, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    message: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     total_files: Mapped[int] = mapped_column(Integer, nullable=False)
     processed_files: Mapped[int] = mapped_column(Integer, nullable=False)
-    current_file: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
-    current_file_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Current file index in the files array
-    file_progress: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    current_file_chunks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    current_file_chunk: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    current_file: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    file_progress: Mapped[float] = mapped_column(Float, nullable=False)
     total_chunks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    current_chunk: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Current chunk being processed
-    processed_chunks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    files: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON list of files
-    merged_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON for merged data
-    merge_reasoning_history: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON for merge reasoning history
-    schema: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON schema for extraction
-    provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True) # LLM provider
-    model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True) # LLM model
-    use_api: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True) # Whether to use API
-    temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True) # Temperature for LLM
-    start_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=datetime.now)
+    current_chunk: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    files: Mapped[str] = mapped_column(String, nullable=False)
+    merged_data: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    merge_reasoning_history: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    schema: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    start_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
     duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     
     def __repr__(self):
         return f"<ExtractionProgress(id={self.id}, dataset={self.dataset_name}, status={self.status})>"
     
-    def to_dict(self):
-        result = {
+    def to_dict(self) -> Dict[str, Any]:
+        return {
             'id': self.id,
-            'dataset_name': self.dataset_name,
             'source': self.source,
+            'dataset_name': self.dataset_name,
             'status': self.status,
             'message': self.message,
             'total_files': self.total_files,
             'processed_files': self.processed_files,
             'current_file': self.current_file,
-            'current_file_index': self.current_file_index,
             'file_progress': self.file_progress,
-            'current_file_chunks': self.current_file_chunks,
-            'current_file_chunk': self.current_file_chunk,
             'total_chunks': self.total_chunks,
             'current_chunk': self.current_chunk,
-            'processed_chunks': self.processed_chunks,
-            'provider': self.provider,
-            'model': self.model,
-            'use_api': self.use_api,
-            'temperature': self.temperature
+            'files': json.loads(self.files) if self.files else [],
+            'merged_data': json.loads(self.merged_data) if self.merged_data else None,
+            'merge_reasoning_history': json.loads(self.merge_reasoning_history) if self.merge_reasoning_history else None,
+            'schema': json.loads(self.schema) if self.schema else None,
+            'start_time': self.start_time.isoformat() if self.start_time else None,
+            'end_time': self.end_time.isoformat() if self.end_time else None,
+            'duration': self.duration
         }
-        
-        # Add timestamps if available
-        if self.start_time:
-            result['start_time'] = self.start_time.isoformat()
-        if self.end_time:
-            result['end_time'] = self.end_time.isoformat()
-        if self.updated_at:
-            result['updated_at'] = self.updated_at.isoformat()
-        if self.duration is not None:
-            result['duration'] = self.duration
-            
-        # Parse JSON fields
-        try:
-            if self.files:
-                result['files'] = json.loads(self.files)
-        except:
-            result['files'] = []
-            
-        try:
-            if self.merged_data:
-                result['merged_data'] = json.loads(self.merged_data)
-        except:
-            result['merged_data'] = {}
-            
-        try:
-            if self.merge_reasoning_history:
-                result['merge_reasoning_history'] = json.loads(self.merge_reasoning_history)
-        except:
-            result['merge_reasoning_history'] = []
-            
-        try:
-            if self.schema:
-                result['schema'] = json.loads(self.schema)
-        except:
-            result['schema'] = {}
-            
-        return result
         
     def get_files(self):
         """Get the list of files as a Python list"""
