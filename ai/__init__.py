@@ -62,16 +62,28 @@ def create_schema_generator(
 def create_llm_extractor(use_api: bool = False, api_key: Optional[str] = None, 
                          provider: Optional[str] = None, **kwargs) -> LLMExtractor:
     """
-    Factory function to create an LLM extractor based on configuration.
+    Create an LLM extractor with the specified configuration
     
     Args:
-        use_api: Whether to use API version (vs. local)
-        api_key: API key for API access
+        use_api: Whether to use an API or local model
+        api_key: API key for the provider
         provider: LLM provider name (default from constants)
+        **kwargs: Additional configuration parameters
         
     Returns:
         An instance of the LLMExtractor
     """
+    # Check if the first argument is a dictionary (for backward compatibility)
+    if isinstance(use_api, dict):
+        config = use_api
+        use_api = config.get('use_api', False)
+        api_key = config.get('api_key', None)
+        provider = config.get('provider', None)
+        # Add any other config parameters to kwargs
+        for key, value in config.items():
+            if key not in ['use_api', 'api_key', 'provider']:
+                kwargs[key] = value
+    
     # Get provider from argument, environment variable, or default constant
     provider = provider or os.environ.get('LLM_PROVIDER') or DEFAULT_LLM_PROVIDER
     print(f"Provider: {provider}, os.environ.get('LLM_PROVIDER'): {os.environ.get('LLM_PROVIDER')}, DEFAULT_LLM_PROVIDER: {DEFAULT_LLM_PROVIDER}")

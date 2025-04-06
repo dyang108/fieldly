@@ -320,7 +320,7 @@ def get_extraction_results(source, dataset_name):
         }), 500
 
 # API endpoint to check for active extraction progress
-@app.route('/api/extraction-progress/check/<source>/<path:dataset_name>', methods=['GET'])
+@app.route('/api/extraction-progress/check/<source>/<path:dataset_name>', methods=['GET','OPTIONS'])
 def check_extraction_progress(source: str, dataset_name: str):
     """Check if there's an active extraction progress for a dataset
 
@@ -335,10 +335,10 @@ def check_extraction_progress(source: str, dataset_name: str):
         # Check if there's an extraction record in the database
         from db import db, ExtractionProgress
         with db.get_session() as session:
-            extraction_record = session.query(ExtractionProgress).filter_by(
-                source=source,
-                dataset_name=dataset_name,
-                status='in_progress'
+            extraction_record = session.query(ExtractionProgress).filter(
+                ExtractionProgress.source == source,
+                ExtractionProgress.dataset_name == dataset_name,
+                ExtractionProgress.status.in_(['in_progress', 'scheduled', 'paused', 'failed'])
             ).order_by(ExtractionProgress.id.desc()).first()
             
             has_extraction_record = extraction_record is not None

@@ -11,8 +11,8 @@ from db import db, ExtractionProgress
 
 logger = logging.getLogger(__name__)
 
-# Lock for thread-safe access to local cache
-cache_lock = threading.Lock()
+# Lock for thread-safe access to database operations
+db_lock = threading.Lock()
 
 def is_extraction_active(source: str, dataset_name: str) -> bool:
     """
@@ -30,11 +30,15 @@ def is_extraction_active(source: str, dataset_name: str) -> bool:
             source=source,
             dataset_name=dataset_name,
             status='in_progress'
+        ).filter(
+            ExtractionProgress.end_time.is_(None)  # Only get truly in-progress extractions
         ).first()
 
-        logger.info(f"Active extraction: {active_extraction}")
+        if active_extraction:
+            logger.info(f"Found active extraction in database for {source}/{dataset_name}")
+            return True
         
-        return active_extraction is not None
+        return False
 
 def get_extraction_state(source: str, dataset_name: str) -> Optional[Dict[str, Any]]:
     """
@@ -78,6 +82,8 @@ def start_extraction(source: str, dataset_name: str, files: List[str]) -> int:
             source=source,
             dataset_name=dataset_name,
             status='in_progress'
+        ).filter(
+            ExtractionProgress.end_time.is_(None)  # Only get truly in-progress extractions
         ).first()
         
         if active_extraction:
@@ -140,6 +146,8 @@ def update_extraction_progress(
                 source=source,
                 dataset_name=dataset_name,
                 status='in_progress'
+            ).filter(
+                ExtractionProgress.end_time.is_(None)  # Only get truly in-progress extractions
             ).first()
             
             if not extraction:
@@ -237,11 +245,126 @@ def complete_extraction(source: str, dataset_name: str, success: bool, message: 
         True if update was successful, False otherwise
     """
     status = 'completed' if success else 'failed'
-    return update_extraction_progress(
-        source, 
-        dataset_name, 
-        {
-            'status': status,
-            'message': message
-        }
-    ) 
+    
+    # Update the extraction record
+    try:
+        with db.get_session() as session:
+            extraction = session.query(ExtractionProgress).filter_by(
+                source=source,
+                dataset_name=dataset_name,
+                status='in_progress'
+            ).filter(
+                ExtractionProgress.end_time.is_(None)  # Only get truly in-progress extractions
+            ).first()
+            
+            if extraction:
+                extraction.status = status
+                extraction.message = message
+                extraction.end_time = datetime.now()
+                if extraction.start_time:
+                    duration = (extraction.end_time - extraction.start_time).total_seconds()
+                    extraction.duration = duration
+                    logger.info(f"Extraction {source}/{dataset_name} {status} in {duration:.2f} seconds")
+                session.commit()
+                logger.info(f"Updated extraction status to {status} for {source}/{dataset_name}")
+                return True
+            else:
+                logger.warning(f"No active extraction found for {source}/{dataset_name} to complete")
+                return False
+    except Exception as e:
+        logger.error(f"Error completing extraction: {e}")
+        return False
+
+def resume_extraction(source: str, dataset_name: str) -> Optional[int]:
+    """
+    Resume a paused or in-progress extraction
+    
+    This function is used to resume an extraction after a server restart
+    or after it was paused.
+    
+    Args:
+        source: The source of the dataset
+        dataset_name: The name of the dataset
+        
+    Returns:
+        The extraction ID if resumed successfully, None otherwise
+    """
+    logger.info(f"Attempting to resume extraction for {source}/{dataset_name}")
+    
+    with db.get_session() as session:
+        # First check for scheduled extractions
+        scheduled_extraction = session.query(ExtractionProgress).filter_by(
+            source=source,
+            dataset_name=dataset_name,
+            status='scheduled'
+        ).first()
+        
+        if scheduled_extraction:
+            logger.info(f"Found scheduled extraction for {source}/{dataset_name}, resuming")
+            return scheduled_extraction.id
+            
+        # Then check for paused extractions
+        paused_extraction = session.query(ExtractionProgress).filter_by(
+            source=source,
+            dataset_name=dataset_name,
+            status='paused'
+        ).first()
+        
+        if paused_extraction:
+            logger.info(f"Found paused extraction for {source}/{dataset_name}, resuming")
+            paused_extraction.status = 'scheduled'
+            session.commit()
+            return paused_extraction.id
+        
+        # If no paused extraction, check for in-progress extractions
+        # (this handles the case after a server restart)
+        in_progress_extraction = session.query(ExtractionProgress).filter_by(
+            source=source,
+            dataset_name=dataset_name,
+            status='in_progress'
+        ).filter(
+            ExtractionProgress.end_time.is_(None)  # Only get truly in-progress extractions
+        ).first()
+        
+        if in_progress_extraction:
+            logger.info(f"Found in-progress extraction for {source}/{dataset_name} after server restart, resuming")
+            return in_progress_extraction.id
+        
+        logger.info(f"No paused or in-progress extraction found for {source}/{dataset_name}")
+        return None
+
+def delete_running_extraction(source: str, dataset_name: str) -> bool:
+    """
+    Delete a running extraction for a dataset
+    
+    Args:
+        source: The source of the dataset
+        dataset_name: The name of the dataset
+        
+    Returns:
+        True if deletion was successful, False otherwise
+    """
+    try:
+        with db.get_session() as session:
+            # Find all running extractions (in_progress, scheduled, paused, or failed)
+            extraction_records = session.query(ExtractionProgress).filter(
+                ExtractionProgress.source == source,
+                ExtractionProgress.dataset_name == dataset_name,
+                ExtractionProgress.status.in_(['in_progress', 'scheduled', 'paused', 'failed'])
+            ).all()
+            
+            if not extraction_records:
+                logger.warning(f"No running extractions found for {source}/{dataset_name}")
+                return False
+            
+            # Delete each running extraction
+            for record in extraction_records:
+                logger.info(f"Deleting extraction {record.id} for {source}/{dataset_name}")
+                session.delete(record)
+            
+            session.commit()
+            logger.info(f"Successfully deleted {len(extraction_records)} running extractions for {source}/{dataset_name}")
+            return True
+    except Exception as e:
+        logger.error(f"Error deleting running extraction: {e}")
+        return False 

@@ -22,11 +22,11 @@ class LLMExtractor(DataExtractor):
         Initialize the LLM extractor
         
         Args:
-            use_api: Whether to use the cloud API (True) or local model (False)
-            api_key: API key for the cloud API (required if use_api is True)
+            use_api: Whether to use an API or local model
+            api_key: API key for the provider
             provider: LLM provider name (default from constants)
-            model: Model name (overrides the default from constants)
-            api_url: API URL (overrides the default from constants)
+            model: Model name to use (default from constants)
+            api_url: API URL for the provider (default from constants)
             temperature: Temperature for model generation (default from constants)
         """
         # Get provider from argument, environment variable, or default constant
@@ -34,12 +34,16 @@ class LLMExtractor(DataExtractor):
         self.use_api = use_api
         self.temperature = temperature
         
+        # Special case for Ollama - always treat it as a local provider
+        if self.provider == "ollama":
+            self.use_api = False
+        
         # Get provider config
         provider_config = PROVIDER_CONFIGS.get(self.provider, {})
-        mode = "api" if use_api else "local"
+        mode = "api" if self.use_api else "local"
         config = provider_config.get(mode, {})
         
-        if use_api:
+        if self.use_api:
             # For API mode
             self.api_key = api_key or os.environ.get(f'{self.provider.upper()}_API_KEY')
             if not self.api_key:
@@ -52,7 +56,7 @@ class LLMExtractor(DataExtractor):
             self.model = model or os.environ.get(f'{self.provider.upper()}_LOCAL_MODEL') or config.get('model')
             self.api_url = api_url or os.environ.get(f'{self.provider.upper()}_LOCAL_API_URL') or config.get('api_url')
         
-        logger.info(f"Initialized LLMExtractor with provider={self.provider}, mode={'api' if use_api else 'local'}, model={self.model}")
+        logger.info(f"Initialized LLMExtractor with provider={self.provider}, mode={'api' if self.use_api else 'local'}, model={self.model}")
     
     def extract_data(self, content: str, schema: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -333,33 +337,85 @@ class LLMExtractor(DataExtractor):
             logger.error(f"Unexpected error in {self.provider} API call: {str(e)}")
             return None
     
-    def merge_results(self, prompt: str, schema: Dict[str, Any]) -> Dict[str, Any]:
+    def merge_results(self, chunk_results):
         """
-        Merge multiple extraction results using the LLM
+        Merge results from multiple chunks.
         
         Args:
-            prompt: Prompt for the LLM to merge the results
-            schema: Schema defining the structure of the data
+            chunk_results: List of extraction results from different chunks
             
         Returns:
-            Merged data as a dictionary matching the schema
+            String explanation of the merge process
         """
-        # Send the prompt to the appropriate model
-        if self.use_api:
-            response_text = self._call_cloud_api(prompt)
-        else:
-            response_text = self._call_local_api(prompt)
-        
-        logger.debug(f"Merge response text: {response_text}")
-        
-        # Parse the response
-        if response_text:
-            merged_data = self.clean_json_response(response_text, schema)
-            if merged_data:
-                return merged_data
-        
-        logger.error("Failed to extract valid JSON from model merge response")
-        return {}
+        try:
+            # If there's only one chunk, no need to merge
+            if len(chunk_results) <= 1:
+                return "No merging needed - only one chunk processed"
+            
+            # Extract data fields from all chunks
+            all_data = [result.get('data', {}) for result in chunk_results if result and 'data' in result]
+            all_metadata = [result.get('metadata', {}) for result in chunk_results if result and 'metadata' in result]
+            
+            # If any chunk has no data, log it
+            if not all(all_data):
+                logger.warning(f"Some chunks have no data: {[bool(data) for data in all_data]}")
+            
+            # Get all unique fields across all chunks
+            all_fields = set()
+            for data in all_data:
+                all_fields.update(data.keys())
+            
+            # Merge the data - for each field, take the value with highest confidence
+            merged_data = {}
+            merged_metadata = {}
+            merge_explanations = []
+            
+            for field in all_fields:
+                # Collect all values and metadata for this field
+                field_values = []
+                field_metadata = []
+                field_confidences = []
+                
+                for i, (data, metadata) in enumerate(zip(all_data, all_metadata)):
+                    if field in data:
+                        field_values.append(data[field])
+                        field_metadata.append(metadata.get(field, {}))
+                        field_confidences.append(metadata.get(field, {}).get('confidence', 0))
+                        
+                # Skip if no values found
+                if not field_values:
+                    continue
+                
+                # Find the value with highest confidence
+                if not field_confidences:
+                    # If no confidence scores available, use the first value
+                    best_index = 0
+                else:
+                    best_index = field_confidences.index(max(field_confidences))
+                
+                merged_data[field] = field_values[best_index]
+                merged_metadata[field] = field_metadata[best_index]
+                
+                # Create an explanation for this field
+                if len(field_values) > 1:
+                    merge_explanations.append(
+                        f"Field '{field}': Selected value from chunk {best_index+1} with "
+                        f"confidence {field_confidences[best_index]}"
+                    )
+            
+            # Update the most recent chunk result with merged data
+            if chunk_results:
+                chunk_results[-1]['data'] = merged_data
+                chunk_results[-1]['metadata'] = merged_metadata
+            
+            # Create a summary explanation of the merge process
+            merge_explanation = "Merged data from multiple chunks:\n" + "\n".join(merge_explanations)
+            logger.info(f"Merge explanation: {merge_explanation}")
+            
+            return merge_explanation
+        except Exception as e:
+            logger.exception(f"Error merging chunk results: {e}")
+            return f"Error merging chunk results: {str(e)}"
 
     def merge_results_with_reasoning(self, prompt: str, schema: Dict[str, Any]) -> Dict[str, Any]:
         """

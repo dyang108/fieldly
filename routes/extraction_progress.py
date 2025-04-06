@@ -98,26 +98,20 @@ def get_extraction_progress_by_dataset(source: str, dataset_name: str) -> Tuple[
 
 @extraction_progress_bp.route('/active', methods=['GET'])
 def get_active_extractions() -> Tuple[Response, int]:
-    """
-    Get all active extraction progress records (status = 'in_progress')
-    
-    Returns:
-        JSON response with active extraction progress records
-    """
+    """Get all active extractions"""
     try:
-        session = db.get_session()
-        active_progresses = session.query(ExtractionProgress).filter_by(
-            status='in_progress'
-        ).order_by(desc(ExtractionProgress.updated_at)).all()
+        # Query the database for in-progress extractions
+        active_progresses = db.session.query(ExtractionProgress).filter(
+            ExtractionProgress.status == 'in_progress',
+            ExtractionProgress.end_time.is_(None)
+        ).all()
         
         return jsonify({
             'active_extractions': [progress.to_dict() for progress in active_progresses]
         }), 200
     except Exception as e:
-        logger.error(f"Error getting active extractions: {str(e)}", exc_info=True)
+        logger.exception(f"Error getting active extractions: {e}")
         return jsonify({'error': str(e)}), 500
-    finally:
-        db.close_session(session)
 
 @extraction_progress_bp.route('/<int:progress_id>', methods=['DELETE'])
 def delete_extraction_progress(progress_id: int) -> Tuple[Response, int]:
@@ -399,4 +393,65 @@ def pause_extraction(source, dataset_name):
         return jsonify({
             'success': False,
             'error': str(e)
-        }), 500 
+        }), 500
+
+@extraction_progress_bp.route('/extraction-progress/resume-extraction/<source>/<dataset_name>', methods=['POST', 'OPTIONS'])
+def resume_extraction_route(source, dataset_name):
+    """Resume a paused or in-progress extraction."""
+    try:
+        logger.info(f"Attempting to resume extraction for {source}/{dataset_name}")
+        
+        # Check if extraction is already active
+        if extraction_progress.is_extraction_active(source, dataset_name):
+            logger.warning(f"Extraction already running for {source}/{dataset_name}")
+            extraction_state = extraction_progress.get_extraction_state(source, dataset_name)
+            return jsonify({
+                'success': True,
+                'message': 'Extraction is already running',
+                'extraction_info': extraction_state
+            })
+        
+        # Find the extraction record to resume
+        with db.get_session() as session:
+            extraction_record = session.query(ExtractionProgress).filter_by(
+                source=source,
+                dataset_name=dataset_name,
+                status='paused'
+            ).order_by(desc(ExtractionProgress.start_time)).first()
+            
+            if not extraction_record:
+                # Check for in-progress extractions as well
+                extraction_record = session.query(ExtractionProgress).filter_by(
+                    source=source,
+                    dataset_name=dataset_name,
+                    status='in_progress'
+                ).order_by(desc(ExtractionProgress.start_time)).first()
+            
+            if not extraction_record:
+                logger.warning(f"No paused or in-progress extraction found for {source}/{dataset_name}")
+                return jsonify({
+                    'success': False,
+                    'error': f'No paused or in-progress extraction found for {dataset_name}'
+                }), 404
+            
+            # Update status to scheduled (will be picked up by batch processor)
+            extraction_record.status = 'scheduled'
+            extraction_record.message = 'Extraction scheduled for resumption'
+            extraction_record.updated_at = datetime.now()
+            session.commit()
+            extraction_id = extraction_record.id
+        
+        logger.info(f"Successfully scheduled extraction {extraction_id} for resumption")
+        
+        # Get the current extraction state
+        extraction_state = extraction_progress.get_extraction_state(source, dataset_name)
+        
+        return jsonify({
+            'success': True,
+            'message': 'Extraction scheduled for resumption',
+            'extraction_id': extraction_id,
+            'extraction_info': extraction_state
+        })
+    except Exception as e:
+        logger.exception(f"Error resuming extraction: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500 

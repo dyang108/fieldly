@@ -78,6 +78,10 @@ class ExtractionProgress(Base):
     merged_data: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON for merged data
     merge_reasoning_history: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON for merge reasoning history
     schema: Mapped[Optional[str]] = mapped_column(Text, nullable=True) # JSON schema for extraction
+    provider: Mapped[Optional[str]] = mapped_column(String(50), nullable=True) # LLM provider
+    model: Mapped[Optional[str]] = mapped_column(String(100), nullable=True) # LLM model
+    use_api: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True) # Whether to use API
+    temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True) # Temperature for LLM
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, default=datetime.now)
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
@@ -102,7 +106,11 @@ class ExtractionProgress(Base):
             'current_file_chunk': self.current_file_chunk,
             'total_chunks': self.total_chunks,
             'current_chunk': self.current_chunk,
-            'processed_chunks': self.processed_chunks
+            'processed_chunks': self.processed_chunks,
+            'provider': self.provider,
+            'model': self.model,
+            'use_api': self.use_api,
+            'temperature': self.temperature
         }
         
         # Add timestamps if available
@@ -138,10 +146,28 @@ class ExtractionProgress(Base):
             if self.schema:
                 result['schema'] = json.loads(self.schema)
         except:
-            result['schema'] = None
+            result['schema'] = {}
             
         return result
-    
+        
+    def get_files(self):
+        """Get the list of files as a Python list"""
+        try:
+            if self.files:
+                return json.loads(self.files)
+            return []
+        except:
+            return []
+            
+    def get_schema(self):
+        """Get the schema as a Python dict"""
+        try:
+            if self.schema:
+                return json.loads(self.schema)
+            return {}
+        except:
+            return {}
+            
     def set_files(self, files_list):
         """Set the files list as JSON"""
         self.files = json.dumps(files_list)

@@ -285,15 +285,24 @@ export default function DatasetDetailView() {
   };
 
   const handleExtractData = async () => {
+    if (!source || !datasetName) {
+      setError('Source or dataset name is undefined');
+      return;
+    }
+    
     if (!selectedSchemaId) {
       setError('Please select a schema first');
       return;
     }
-
-    setExtracting(true);
-    setExtractionResult(null);
+    
     setError('');
-    setExpandedRows({});
+    setExtracting(true);
+    
+    // Only clear extraction results if starting a new extraction, not when resuming
+    if (!hasActiveExtraction) {
+      setExtractionResult(null);
+      setExpandedRows({});
+    }
     
     // Reset extraction tracking
     extractionStatusRef.current = {
@@ -309,18 +318,39 @@ export default function DatasetDetailView() {
         throw new Error('Selected schema not found');
       }
       
-      // Start extraction process
-      const response = await api.post(
-        `/api/extract/${source!}/${encodeURIComponent(datasetName!)}`,
-        schema.schema,
-        {
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+      let response;
       
-      setNotification(`Data extraction started for ${datasetName}`);
+      // If we have an active extraction, use the resume endpoint
+      if (hasActiveExtraction) {
+        console.log('Resuming existing extraction for:', datasetName);
+        
+        response = await api.post(
+          `/api/extraction-progress/resume-extraction/${source!}/${encodeURIComponent(datasetName!)}`,
+          {}, // Empty body since the schema is already stored
+          {
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        
+        setNotification(`Resuming data extraction for ${datasetName}`);
+      } else {
+        console.log('Starting new extraction for:', datasetName);
+        
+        // Start extraction process
+        response = await api.post(
+          `/api/extract/${source!}/${encodeURIComponent(datasetName!)}`,
+          schema.schema,
+          {
+            headers: {
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        
+        setNotification(`Data extraction started for ${datasetName}`);
+      }
       
       // Navigate to the extraction progress page
       navigate(`/extraction-progress/${source}/${datasetName}`);
@@ -375,6 +405,32 @@ export default function DatasetDetailView() {
     setSelectedPdf(null);
   };
   
+  const handleDeleteRunningExtraction = async () => {
+    if (!source || !datasetName) {
+      setError('Source or dataset name is undefined');
+      return;
+    }
+    
+    try {
+      setLoading(true);
+      const response = await api.post(
+        `/api/delete-running-extraction/${source}/${encodeURIComponent(datasetName)}`
+      );
+      
+      if (response.data.success) {
+        setNotification(response.data.message || 'Running extraction deleted successfully');
+        setHasActiveExtraction(false);
+      } else {
+        setError(response.data.message || 'Failed to delete running extraction');
+      }
+    } catch (err) {
+      console.error('Error deleting running extraction:', err);
+      setError('Failed to delete running extraction');
+    } finally {
+      setLoading(false);
+    }
+  };
+  
   // Determine which results to show - now we only use extractionResult
   const resultsToShow = extractionResult ? extractionResult.results : [];
 
@@ -411,15 +467,27 @@ export default function DatasetDetailView() {
         <Box sx={{ display: 'flex', gap: 2 }}>
           {/* Add extraction progress button when active */}
           {hasActiveExtraction && (
-            <Button
-              component={RouterLink}
-              to={`/extraction-progress/${source}/${datasetName}`}
-              variant="outlined"
-              color="primary"
-              startIcon={<TimelineIcon />}
-            >
-              View Extraction Progress
-            </Button>
+            <>
+              <Button
+                component={RouterLink}
+                to={`/extraction-progress/${source}/${datasetName}`}
+                variant="outlined"
+                color="primary"
+                startIcon={<TimelineIcon />}
+              >
+                View Extraction Progress
+              </Button>
+              
+              <Button
+                variant="outlined"
+                color="error"
+                startIcon={<DeleteIcon />}
+                onClick={handleDeleteRunningExtraction}
+                disabled={loading}
+              >
+                Delete Running Extraction
+              </Button>
+            </>
           )}
           
           <Button 
@@ -428,7 +496,7 @@ export default function DatasetDetailView() {
             onClick={handleExtractData}
             startIcon={extracting ? <CircularProgress size={20} /> : undefined}
           >
-            Extract Data
+            {hasActiveExtraction ? 'Resume Extraction' : 'Extract Data'}
           </Button>
           
           <Button
@@ -532,7 +600,7 @@ export default function DatasetDetailView() {
                   labelId="schema-select-label"
                   value={selectedSchemaId || ''}
                   label="Select Schema"
-                  onChange={(e) => setSelectedSchemaId(e.target.value ? Number(e.target.value) : null)}
+                  onChange={(e) => handleSchemaChange(e.target.value ? Number(e.target.value) : null)}
                 >
                   <MenuItem value="">
                     <em>None</em>
