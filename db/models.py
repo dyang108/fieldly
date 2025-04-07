@@ -1,7 +1,7 @@
 import json
 from datetime import datetime
 from typing import Dict, Any, List, Optional, cast
-from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Float, Text
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Boolean, Float, Text, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 
@@ -67,16 +67,22 @@ class ExtractionProgress(Base):
     total_files: Mapped[int] = mapped_column(Integer, nullable=False)
     processed_files: Mapped[int] = mapped_column(Integer, nullable=False)
     current_file: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    current_file_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # Current file index in the files array
     file_progress: Mapped[float] = mapped_column(Float, nullable=False)
     total_chunks: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     current_chunk: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     files: Mapped[str] = mapped_column(String, nullable=False)
-    merged_data: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    merge_reasoning_history: Mapped[Optional[str]] = mapped_column(String, nullable=True)
-    schema: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    merged_data: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # JSON for merged data
+    merge_reasoning_history: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # JSON for merge reasoning history
+    schema: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # JSON schema for extraction
+    provider: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # LLM provider (e.g., 'openai', 'anthropic')
+    model: Mapped[Optional[str]] = mapped_column(String, nullable=True)  # LLM model name
+    use_api: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)  # Whether to use API or local model
+    temperature: Mapped[Optional[float]] = mapped_column(Float, nullable=True)  # Temperature for LLM
     start_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     end_time: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     duration: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
     
     def __repr__(self):
         return f"<ExtractionProgress(id={self.id}, dataset={self.dataset_name}, status={self.status})>"
@@ -91,6 +97,7 @@ class ExtractionProgress(Base):
             'total_files': self.total_files,
             'processed_files': self.processed_files,
             'current_file': self.current_file,
+            'current_file_index': self.current_file_index,
             'file_progress': self.file_progress,
             'total_chunks': self.total_chunks,
             'current_chunk': self.current_chunk,
@@ -98,9 +105,14 @@ class ExtractionProgress(Base):
             'merged_data': json.loads(self.merged_data) if self.merged_data else None,
             'merge_reasoning_history': json.loads(self.merge_reasoning_history) if self.merge_reasoning_history else None,
             'schema': json.loads(self.schema) if self.schema else None,
+            'provider': self.provider,
+            'model': self.model,
+            'use_api': self.use_api,
+            'temperature': self.temperature,
             'start_time': self.start_time.isoformat() if self.start_time else None,
             'end_time': self.end_time.isoformat() if self.end_time else None,
-            'duration': self.duration
+            'duration': self.duration,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
         
     def get_files(self):

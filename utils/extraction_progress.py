@@ -64,54 +64,55 @@ def get_extraction_state(source: str, dataset_name: str) -> Optional[Dict[str, A
 
 def start_extraction(source: str, dataset_name: str, files: List[str]) -> int:
     """
-    Start tracking a new extraction process
+    Start a new extraction process
     
     Args:
-        source: The source of the dataset (e.g., 'local', 's3')
+        source: The source of the dataset
         dataset_name: The name of the dataset
-        files: List of files to be processed
+        files: List of files to process
         
     Returns:
-        The ID of the created extraction progress record
+        ID of the extraction progress record
     """
-    logger.info(f"Starting extraction for {source}/{dataset_name} with {len(files)} files")
-    
-    with db.get_session() as session:
-        # Check if there's an active extraction
-        active_extraction = session.query(ExtractionProgress).filter_by(
-            source=source,
-            dataset_name=dataset_name,
-            status='in_progress'
-        ).filter(
-            ExtractionProgress.end_time.is_(None)  # Only get truly in-progress extractions
-        ).first()
-        
-        if active_extraction:
-            logger.warning(f"Active extraction already exists for {source}/{dataset_name}")
-            return active_extraction.id
-        
-        # Create a new extraction record
-        extraction = ExtractionProgress(
-            source=source,
-            dataset_name=dataset_name,
-            status='in_progress',
-            total_files=len(files),
-            processed_files=0,
-            current_file=files[0] if files else '',
-            current_file_index=0,
-            file_progress=0,
-            files=json.dumps(files),
-            total_chunks=0,
-            processed_chunks=0,
-            current_chunk=0,
-            start_time=datetime.now()
-        )
-        
-        session.add(extraction)
-        session.commit()
-        logger.info(f"Created new extraction progress record with id {extraction.id}")
-        
-        return extraction.id
+    try:
+        with db.get_session() as session:
+            # Check if there's already an active extraction
+            active_extraction = session.query(ExtractionProgress).filter_by(
+                source=source,
+                dataset_name=dataset_name,
+                status='in_progress'
+            ).filter(
+                ExtractionProgress.end_time.is_(None)  # Only get truly in-progress extractions
+            ).first()
+            
+            if active_extraction:
+                logger.warning(f"Active extraction already exists for {source}/{dataset_name}")
+                return active_extraction.id
+            
+            # Create a new extraction record
+            extraction = ExtractionProgress(
+                source=source,
+                dataset_name=dataset_name,
+                status='in_progress',
+                total_files=len(files),
+                processed_files=0,
+                current_file=files[0] if files else '',
+                current_file_index=0,
+                file_progress=0,
+                files=json.dumps(files),
+                total_chunks=0,
+                current_chunk=0,
+                start_time=datetime.now()
+            )
+            
+            session.add(extraction)
+            session.commit()
+            logger.info(f"Started new extraction for {source}/{dataset_name}")
+            return extraction.id
+            
+    except Exception as e:
+        logger.error(f"Error starting extraction: {e}")
+        return 0
 
 def update_extraction_progress(
     source: str, 
@@ -158,7 +159,29 @@ def update_extraction_progress(
                 if field == 'merged_data' and value is not None:
                     extraction.merged_data = json.dumps(value)
                 elif field == 'merge_reasoning_history' and value is not None:
-                    extraction.merge_reasoning_history = json.dumps(value)
+                    # If value is None or explicitly set to None, clear the history
+                    if value is None:
+                        extraction.merge_reasoning_history = None
+                        logger.debug(f"Cleared merge reasoning history for {source}/{dataset_name}")
+                    else:
+                        # Get existing history
+                        current_history = []
+                        if extraction.merge_reasoning_history:
+                            try:
+                                current_history = json.loads(extraction.merge_reasoning_history)
+                            except:
+                                current_history = []
+                        
+                        # If value is a single entry, append it
+                        if isinstance(value, dict):
+                            current_history.append(value)
+                        # If value is a list, extend the history
+                        elif isinstance(value, list):
+                            current_history.extend(value)
+                        
+                        # Update the history
+                        extraction.merge_reasoning_history = json.dumps(current_history)
+                        logger.debug(f"Updated merge reasoning history for {source}/{dataset_name}, now has {len(current_history)} entries")
                 elif field == 'schema' and value is not None:
                     extraction.schema = json.dumps(value)
                 elif field == 'files' and value is not None:

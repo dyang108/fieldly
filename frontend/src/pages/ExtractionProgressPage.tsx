@@ -132,72 +132,6 @@ const ExtractionProgressPage: React.FC = () => {
     }
   };
 
-  // Resume a paused extraction
-  const resumeExtraction = async () => {
-    if (!source || !datasetName || !progress) return;
-    
-    try {
-      setResuming(true);
-      const response = await fetch(`/api/extraction-resume/${source}/${encodeURIComponent(datasetName)}`, {
-        method: 'POST'
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          // Update the progress with running status
-          setProgress({
-            ...progress,
-            is_running: true,
-            status: data.status || 'in_progress',
-            message: data.message || 'Extraction resumed'
-          });
-        } else {
-          setError(data.error || 'Failed to resume extraction');
-        }
-      } else {
-        setError('Failed to resume extraction');
-      }
-    } catch (err) {
-      setError(`Error resuming extraction: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setResuming(false);
-    }
-  };
-  
-  // Pause a running extraction
-  const pauseExtraction = async () => {
-    if (!source || !datasetName || !progress) return;
-    
-    try {
-      setPausing(true);
-      const response = await fetch(`/api/extraction-pause/${source}/${encodeURIComponent(datasetName)}`, {
-        method: 'POST'
-      });
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.success) {
-          // Update the progress with paused status
-          setProgress({
-            ...progress,
-            is_running: false,
-            status: data.status || 'paused',
-            message: data.message || 'Extraction paused'
-          });
-        } else {
-          setError(data.error || 'Failed to pause extraction');
-        }
-      } else {
-        setError('Failed to pause extraction');
-      }
-    } catch (err) {
-      setError(`Error pausing extraction: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setPausing(false);
-    }
-  };
-  
   // Fetch progress on component mount
   useEffect(() => {
     fetchProgress();
@@ -344,30 +278,6 @@ const ExtractionProgressPage: React.FC = () => {
           Back to Dataset
         </Button>
         <Box>
-          {canResume && (
-            <Button 
-              startIcon={<PlayArrowIcon />} 
-              onClick={resumeExtraction}
-              disabled={resuming}
-              variant="contained"
-              color="success"
-              sx={{ mr: 1 }}
-            >
-              {resuming ? 'Resuming...' : 'Resume Extraction'}
-            </Button>
-          )}
-          {canPause && (
-            <Button 
-              startIcon={<PauseIcon />} 
-              onClick={pauseExtraction}
-              disabled={pausing}
-              variant="contained"
-              color="warning"
-              sx={{ mr: 1 }}
-            >
-              {pausing ? 'Pausing...' : 'Pause Extraction'}
-            </Button>
-          )}
           <Button 
             startIcon={<RefreshIcon />} 
             onClick={handleRefresh}

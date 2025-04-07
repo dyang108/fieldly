@@ -365,53 +365,160 @@ Return only the JSON object, with no additional text or explanation.
                     'message': f'Processed chunk {i+1}/{len(chunks)} of {os.path.basename(file_path)}'
                 }
             )
-        
-        # Merge results if there are multiple chunks
-        if len(chunk_results) > 1:
-            print(f"\n[LLM Extraction] Merging {len(chunk_results)} chunk results for {file_path}")
             
-            # Update progress to indicate merging
+            # Perform intermediate merges every 2 chunks
+            if len(chunk_results) > 1 and (i + 1) % 2 == 0 and i + 1 < len(chunks):
+                print(f"[LLM Extraction] Performing intermediate merge after chunk {i+1}/{len(chunks)}")
+                
+                # Create intermediate merge 
+                intermediate_merge_explanation = extractor.merge_results(chunk_results[:i+1])
+                
+                # Store the intermediate result with merge explanation
+                intermediate_result = chunk_results[i]  # Use the current chunk result
+                intermediate_result['merge_explanation'] = intermediate_merge_explanation
+                
+                # Extract the merged data for preview
+                intermediate_merged_data = intermediate_result.get('data', {})
+                
+                # Create a reasoning entry for this intermediate merge
+                timestamp = int(time.time())
+                intermediate_reasoning_entry = {
+                    "timestamp": timestamp,
+                    "chunk_index": i,
+                    "total_chunks": len(chunks),
+                    "reasoning": {"merge_explanation": intermediate_merge_explanation},
+                    "is_final": False
+                }
+                
+                # Update progress with intermediate merge reasoning
+                print(f"[LLM Extraction] Updating extraction progress with intermediate merge reasoning")
+                extraction_progress.update_extraction_progress(
+                    source, 
+                    dataset_name, 
+                    {
+                        'current_file': file_path,
+                        'message': f'Intermediate merge after chunk {i+1}/{len(chunks)} of {os.path.basename(file_path)}',
+                        'merge_reasoning_history': intermediate_reasoning_entry,
+                        'merged_data': intermediate_merged_data
+                    }
+                )
+        
+        # Final merge if there are multiple chunks
+        if len(chunk_results) > 1:
+            print(f"\n[LLM Extraction] Performing final merge for all {len(chunk_results)} chunks of {file_path}")
+            
+            # Update progress to indicate final merging
             extraction_progress.update_extraction_progress(
                 source, 
                 dataset_name, 
                 {
                     'current_file': file_path,
-                    'message': f'Merging results from {len(chunk_results)} chunks'
+                    'message': f'Performing final merge for all chunks of {os.path.basename(file_path)}'
                 }
             )
             
             # Create merge prompt with previous results
-            print(f"[LLM Extraction] Calling extractor.merge_results to merge chunks")
+            print(f"[LLM Extraction] Calling extractor.merge_results to merge all chunks")
             merge_explanation = extractor.merge_results(chunk_results)
-            print(f"[LLM Extraction] Merge explanation: {merge_explanation}")
+            print(f"[LLM Extraction] Final merge explanation: {merge_explanation}")
             
             # Store the final result with merge explanation
             final_result = chunk_results[-1]  # Use the last merged result
             final_result['merge_explanation'] = merge_explanation
             
-            # Update progress with merge explanation
-            print(f"[LLM Extraction] Updating extraction progress with final merged result")
+            # Extract the merged data for preview
+            merged_data = final_result.get('data', {})
+            
+            # Create a reasoning entry for this final merge
+            timestamp = int(time.time())
+            reasoning_entry = {
+                "timestamp": timestamp,
+                "chunk_index": len(chunk_results) - 1,
+                "total_chunks": len(chunk_results),
+                "reasoning": {"merge_explanation": merge_explanation},
+                "is_final": True
+            }
+            
+            # Update progress with final merge explanation and reasoning entry
+            print(f"[LLM Extraction] Updating extraction progress with final merge reasoning")
+            extraction_progress.update_extraction_progress(
+                source, 
+                dataset_name, 
+                {
+                    'current_file': file_path,
+                    'message': f'Completed final merge for {os.path.basename(file_path)}',
+                    'merge_reasoning_history': reasoning_entry,
+                    'merged_data': merged_data
+                }
+            )
+        else:
+            print(f"[LLM Extraction] Single chunk processed, no merging required")
+            final_result = chunk_results[0]
+            
+            # Extract the data for preview
+            merged_data = final_result.get('data', {})
+            
+            # Create a single-chunk reasoning entry
+            timestamp = int(time.time())
+            reasoning_entry = {
+                "timestamp": timestamp,
+                "chunk_index": 0,
+                "total_chunks": 1,
+                "reasoning": {"single_chunk": "Only one chunk was processed, so no merging was necessary."},
+                "is_final": True
+            }
+            
+            # Update progress with data preview and reasoning
             extraction_progress.update_extraction_progress(
                 source, 
                 dataset_name, 
                 {
                     'current_file': file_path,
                     'message': f'Completed processing {os.path.basename(file_path)}',
-                    'merge_explanation': merge_explanation
+                    'merged_data': merged_data,
+                    'merge_reasoning_history': reasoning_entry
                 }
             )
-        else:
-            print(f"[LLM Extraction] Single chunk processed, no merging required")
-            final_result = chunk_results[0]
         
-        # Update extraction progress
+        # Update extraction progress and clear merge reasoning after file is complete
         print(f"[LLM Extraction] Updating extraction progress record to indicate completion")
         with db.get_session() as update_session:
             extraction_progress_record = update_session.query(ExtractionProgress).get(extraction_progress_id)
             if extraction_progress_record:
                 extraction_progress_record.processed_files += 1
+                # Clear merge reasoning and preview data since file is complete
+                extraction_progress_record.merge_reasoning_history = None
                 update_session.commit()
-                print(f"[LLM Extraction] Extraction progress record updated")
+                print(f"[LLM Extraction] Extraction progress record updated and merge reasoning cleared")
+        
+        # Save the final extraction result to a file
+        try:
+            # Create output directory based on source/dataset
+            output_dir = Path(f"{DATA_DIR}/extracted/{source}/{dataset_name}")
+            os.makedirs(output_dir, exist_ok=True)
+            
+            # Create output filename based on the input filename
+            output_filename = os.path.splitext(os.path.basename(file_path))[0] + '.json'
+            output_file_path = output_dir / output_filename
+            
+            # Save the extraction result
+            print(f"[LLM Extraction] Saving final extraction result to {output_file_path}")
+            with open(output_file_path, 'w', encoding='utf-8') as f:
+                json.dump(final_result.get('data', {}), f, indent=2)
+            
+            print(f"[LLM Extraction] Extraction result saved successfully")
+            
+            # Update progress to indicate file saved
+            extraction_progress.update_extraction_progress(
+                source, 
+                dataset_name, 
+                {
+                    'message': f'Saved extraction result for {os.path.basename(file_path)}'
+                }
+            )
+        except Exception as e:
+            print(f"[LLM Extraction] ERROR saving extraction result: {str(e)}")
+            logger.exception(f"Error saving extraction result for {file_path}: {e}")
         
         print(f"[LLM Extraction] Processing completed for {file_path}")
         return final_result
@@ -610,6 +717,8 @@ def handle_dataset_extraction(extraction_progress_id, source, dataset_name, file
         print(f"\n[Extraction Task] ===== STEP 2: RUNNING LLM EXTRACTION (SINGLE-THREADED) =====")
         logger.info("Step 2: Running LLM extraction on all files (single-threaded)")
         
+        all_results = []
+        
         for i, filename in enumerate(files):
             # Check if extraction has been paused or cancelled
             current_status = extraction_progress.get_extraction_status(source, dataset_name)
@@ -651,6 +760,12 @@ def handle_dataset_extraction(extraction_progress_id, source, dataset_name, file
                 result = process_file(filename, source, dataset_name, config, markdown_content)
                 print(f"[Extraction Task] LLM extraction completed for {filename}")
                 
+                # Store the processing status
+                all_results.append({
+                    'filename': filename,
+                    'success': True
+                })
+                
                 # Update processed files count
                 print(f"[Extraction Task] Updating processed files count: {i+1}/{len(files)}")
                 extraction_progress.update_extraction_progress(
@@ -668,6 +783,16 @@ def handle_dataset_extraction(extraction_progress_id, source, dataset_name, file
         
         # Complete the extraction
         print(f"\n[Extraction Task] All files processed, completing extraction task")
+        
+        # Clear any remaining merge reasoning history
+        extraction_progress.update_extraction_progress(
+            source, 
+            dataset_name, 
+            {
+                'merge_reasoning_history': None
+            }
+        )
+        
         extraction_progress.complete_extraction(
             source, 
             dataset_name, 

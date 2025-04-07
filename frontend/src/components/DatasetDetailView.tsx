@@ -489,15 +489,16 @@ export default function DatasetDetailView() {
               </Button>
             </>
           )}
-          
+          {!hasActiveExtraction &&
           <Button 
             variant="contained" 
             disabled={extracting || !selectedSchemaId}
             onClick={handleExtractData}
             startIcon={extracting ? <CircularProgress size={20} /> : undefined}
           >
-            {hasActiveExtraction ? 'Resume Extraction' : 'Extract Data'}
-          </Button>
+              {'Extract Data'}
+            </Button>
+          }
           
           <Button
             variant="outlined"

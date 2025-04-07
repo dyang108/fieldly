@@ -380,33 +380,6 @@ def process_file(file_path: str, source: str, dataset_name: str, config: Dict[st
                 db.session.commit()
         raise
 
-def handle_extraction_task(extraction_progress_id, md_path, schema, extractor, source, dataset_name, filename, json_path):
-    """
-    Handle the actual extraction task in a background thread
-    """
-    try:
-        logger.info(f"Starting extraction task for {filename}")
-        
-        # Extract data from the Markdown file
-        extracted_data = extract_data_from_markdown(md_path, schema, extractor, source, dataset_name, filename, extraction_progress_id)
-        
-        # Save the extracted data to JSON
-        with open(json_path, 'w') as f:
-            json.dump(extracted_data, f, indent=2)
-            
-        # Mark the extraction as completed
-        extraction_progress.complete_extraction(source, dataset_name, True, f"Successfully processed {filename}")
-        
-        logger.info(f"Successfully completed extraction task for {filename}")
-        return extracted_data
-    except Exception as e:
-        logger.error(f"Error in extraction task for {filename}: {str(e)}", exc_info=True)
-        
-        # Update extraction progress with error
-        extraction_progress.complete_extraction(source, dataset_name, False, f"Error: {str(e)}")
-        
-        raise
-
 def convert_pdf_to_markdown(pdf_path: str, md_path: str) -> None:
     """Convert a PDF file to Markdown using pymupdf4llm"""
     try:
@@ -562,12 +535,6 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
     with open(markdown_file, 'r', encoding='utf-8') as f:
         content = f.read()
     
-    # Progress tracking enabled if source, dataset_name, and filename are provided
-    track_progress = source and dataset_name and filename
-    
-    if track_progress:
-        logger.info(f"Progress tracking enabled for {source}_{dataset_name}, file: {filename}")
-    
     # Split the content into chunks
     chunks = split_content_into_chunks(content)
     total_chunks = len(chunks)
@@ -582,7 +549,9 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
             'status': 'in_progress',
             'message': 'Processing files',
             'total_chunks': total_chunks,
-            'current_chunk': 0
+            'current_chunk': 0,
+            'merged_data': None,
+            'merge_reasoning_history': []
         }
     )
     
@@ -593,11 +562,10 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
     current_chunk = 0
     
     # Check if we need to resume from a specific chunk
-    if track_progress:
-        extraction_state = extraction_progress.get_extraction_state(source, dataset_name)
-        if extraction_state and extraction_state.get('status') == 'paused':
-            current_chunk = extraction_state.get('current_chunk', 0)
-            logger.info(f"Resuming extraction from chunk {current_chunk}/{total_chunks}")
+    extraction_state = extraction_progress.get_extraction_state(source, dataset_name)
+    if extraction_state and extraction_state.get('status') == 'paused':
+        current_chunk = extraction_state.get('current_chunk', 0)
+        logger.info(f"Resuming extraction from chunk {current_chunk}/{total_chunks}")
     
     for i, chunk in enumerate(chunks):
         # Skip chunks that were already processed if resuming
@@ -608,26 +576,25 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
         logger.info(f"Processing chunk {i+1}/{total_chunks}")
         
         # Update current chunk in the database
-        if track_progress:
-            extraction_state = extraction_progress.get_extraction_state(source, dataset_name)
-            if extraction_state:
-                # Check if extraction has been paused or cancelled
-                if extraction_state.get('status') == 'paused':
-                    logger.info(f"Extraction paused at chunk {i+1}/{total_chunks}")
-                    break
-                elif extraction_state.get('status') == 'cancelled':
-                    logger.info(f"Extraction cancelled")
-                    break
-            
-            # Update extraction progress with current chunk
-            extraction_progress.update_extraction_progress(
-                source, 
-                dataset_name, 
-                {
-                    'current_chunk': i + 1,
-                    'message': f'Processing chunk {i+1}/{total_chunks}'
-                }
-            )
+        extraction_state = extraction_progress.get_extraction_state(source, dataset_name)
+        if extraction_state:
+            # Check if extraction has been paused or cancelled
+            if extraction_state.get('status') == 'paused':
+                logger.info(f"Extraction paused at chunk {i+1}/{total_chunks}")
+                break
+            elif extraction_state.get('status') == 'cancelled':
+                logger.info(f"Extraction cancelled")
+                break
+        
+        # Update extraction progress with current chunk
+        extraction_progress.update_extraction_progress(
+            source, 
+            dataset_name, 
+            {
+                'current_chunk': i + 1,
+                'message': f'Processing chunk {i+1}/{total_chunks}'
+            }
+        )
         
         # Create a prompt for this chunk
         prompt = create_extraction_prompt_with_context(chunk, schema, i, len(chunks))
@@ -640,10 +607,12 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
             'chunk_index': i,
             'data': chunk_data
         })
+
+        logger.info(f'Chunk {i+1}/{total_chunks} processed, data: {chunk_data}')
         
         # If we have processed data from multiple chunks, do an intermediate merge
         # and report the current state for progress tracking
-        if track_progress and i > 0 and i % 2 == 0:
+        if i > 0 and i % 2 == 0:
             logger.info(f"Performing intermediate merge after chunk {i+1}/{total_chunks}")
             # Create a prompt for merging the current results with reasoning
             intermediate_merge_prompt = create_intermediate_merge_prompt(all_chunk_results[:i+1], schema)
@@ -699,16 +668,15 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
         merge_reasoning_history.append(reasoning_entry)
         
         # Update the merged data for progress tracking
-        if track_progress:
-            logger.debug(f"Updating final merged data for: {source}, {dataset_name}")
-            extraction_progress.update_extraction_progress(
-                source,
-                dataset_name,
-                {
-                    'merged_data': result_data,
-                    'merge_reasoning_history': merge_reasoning_history
-                }
-            )
+        logger.debug(f"Updating final merged data for: {source}, {dataset_name}")
+        extraction_progress.update_extraction_progress(
+            source,
+            dataset_name,
+            {
+                'merged_data': result_data,
+                'merge_reasoning_history': merge_reasoning_history
+            }
+        )
         
         return result_data
     
@@ -736,16 +704,15 @@ def extract_data_from_markdown(markdown_file: Path, schema: Dict[str, Any], extr
     merge_reasoning_history.append(final_reasoning_entry)
     
     # Save final result to database
-    if track_progress:
-        extraction_progress.update_extraction_progress(
-            source, 
-            dataset_name, 
-            {
-                'merged_data': merged_data,
-                'merge_reasoning_history': merge_reasoning_history,
-                'file_progress': 1.0
-            }
-        )
+    extraction_progress.update_extraction_progress(
+        source, 
+        dataset_name, 
+        {
+            'merged_data': merged_data,
+            'merge_reasoning_history': merge_reasoning_history,
+            'file_progress': 1.0
+        }
+    )
     
     return merged_data
 

@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple, cast
 from flask import Blueprint, request, jsonify, Response
 from sqlalchemy import desc
+import json
 
 from db import db, ExtractionProgress
 from utils import extraction_progress
@@ -269,7 +270,42 @@ def get_extraction_status(source, dataset_name):
         # Get the extraction status using our utility
         is_running = extraction_progress.is_extraction_active(source, dataset_name)
         extraction_state = extraction_progress.get_extraction_state(source, dataset_name)
-        print(extraction_state)
+        
+        # Debug information
+        with db.get_session() as session:
+            extract_record = session.query(ExtractionProgress).filter_by(
+                source=source,
+                dataset_name=dataset_name
+            ).order_by(ExtractionProgress.id.desc()).first()
+            
+            if extract_record:
+                print(f"DEBUG - Direct DB data for {source}/{dataset_name}:")
+                print(f"  id: {extract_record.id}")
+                print(f"  status: {extract_record.status}")
+                print(f"  merged_data: {extract_record.merged_data is not None}")
+                if extract_record.merged_data:
+                    print(f"  merged_data length: {len(extract_record.merged_data)}")
+                print(f"  merge_reasoning_history: {extract_record.merge_reasoning_history is not None}")
+                if extract_record.merge_reasoning_history:
+                    print(f"  merge_reasoning_history length: {len(extract_record.merge_reasoning_history)}")
+                
+                # Try to parse the JSON directly as a test
+                try:
+                    if extract_record.merged_data:
+                        merged_data = json.loads(extract_record.merged_data)
+                        print(f"  parsed merged_data: {type(merged_data)} with {len(merged_data)} keys")
+                    if extract_record.merge_reasoning_history:
+                        merge_history = json.loads(extract_record.merge_reasoning_history)
+                        print(f"  parsed merge_reasoning_history: {type(merge_history)} with {len(merge_history)} entries")
+                except Exception as e:
+                    print(f"  JSON parsing error: {str(e)}")
+        
+        print(f"DEBUG - Extraction state from utility:")
+        print(f"  extraction_state: {extraction_state}")
+        if extraction_state:
+            print(f"  merged_data: {extraction_state.get('merged_data') is not None}")
+            print(f"  merge_reasoning_history: {extraction_state.get('merge_reasoning_history') is not None}")
+            
         return jsonify({
             'success': True,
             'is_running': is_running,
@@ -454,4 +490,87 @@ def resume_extraction_route(source, dataset_name):
         })
     except Exception as e:
         logger.exception(f"Error resuming extraction: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@extraction_progress_bp.route('/debug/test-merge-fields/<source>/<dataset_name>', methods=['GET', 'POST'])
+def test_merge_fields(source, dataset_name):
+    """Debug endpoint to directly test setting and getting merge fields"""
+    try:
+        with db.get_session() as session:
+            extraction_record = session.query(ExtractionProgress).filter_by(
+                source=source,
+                dataset_name=dataset_name
+            ).order_by(ExtractionProgress.id.desc()).first()
+            
+            if not extraction_record:
+                return jsonify({
+                    'success': False,
+                    'message': f"No extraction record found for {source}/{dataset_name}"
+                }), 404
+            
+            # For POST requests, directly set the fields 
+            if request.method == 'POST':
+                # Create test data
+                test_merged_data = {"test_key": "test_value", "number": 42}
+                test_reasoning_entry = {
+                    "timestamp": int(time.time()),
+                    "reasoning": {"test_reasoning": "This is a test reasoning entry"},
+                    "is_final": True
+                }
+                
+                # Set the fields directly
+                extraction_record.set_merged_data(test_merged_data)
+                
+                # For reasoning history, initialize it if it's empty
+                current_history = []
+                if extraction_record.merge_reasoning_history:
+                    try:
+                        current_history = json.loads(extraction_record.merge_reasoning_history)
+                    except:
+                        current_history = []
+                
+                current_history.append(test_reasoning_entry)
+                extraction_record.set_merge_reasoning_history(current_history)
+                
+                # Commit the changes
+                session.commit()
+                
+                return jsonify({
+                    'success': True,
+                    'message': "Test data set successfully",
+                    'test_merged_data': test_merged_data,
+                    'test_reasoning_entry': test_reasoning_entry
+                })
+            
+            # For GET requests, retrieve and return the fields
+            else:
+                # Get the data from the record
+                merged_data = None
+                merge_reasoning_history = None
+                
+                if extraction_record.merged_data:
+                    try:
+                        merged_data = json.loads(extraction_record.merged_data)
+                    except Exception as e:
+                        merged_data = {"error": f"Failed to parse merged_data: {str(e)}"}
+                
+                if extraction_record.merge_reasoning_history:
+                    try:
+                        merge_reasoning_history = json.loads(extraction_record.merge_reasoning_history)
+                    except Exception as e:
+                        merge_reasoning_history = [{"error": f"Failed to parse merge_reasoning_history: {str(e)}"}]
+                
+                # Return the data
+                return jsonify({
+                    'success': True,
+                    'id': extraction_record.id,
+                    'status': extraction_record.status,
+                    'merged_data': merged_data,
+                    'merge_reasoning_history': merge_reasoning_history,
+                    'merged_data_raw': extraction_record.merged_data,
+                    'merge_reasoning_history_raw': extraction_record.merge_reasoning_history
+                })
+                
+    except Exception as e:
+        logger.exception(f"Error in test_merge_fields: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500 
