@@ -5,6 +5,12 @@
 import '@testing-library/jest-dom';
 import { jest } from '@jest/globals';
 
+// Fix for React act warnings
+// Set to false to silence the warning about not using act()
+// This should only be used if you really can't use act()
+// We should wrap renders in act() whenever possible
+(global as any).IS_REACT_ACT_ENVIRONMENT = true;
+
 // TextEncoder/TextDecoder polyfill
 class TextEncoderPolyfill {
   encode(text: string): Uint8Array {
@@ -40,7 +46,7 @@ global.IntersectionObserver = class IntersectionObserver {
 // Mock window.matchMedia
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
-  value: jest.fn().mockImplementation(function mockMatchMedia(query: string) {
+  value: jest.fn().mockImplementation((query: string) => {
     return {
       matches: false,
       media: query,
@@ -51,5 +57,5 @@ Object.defineProperty(window, 'matchMedia', {
       removeEventListener: jest.fn(),
       dispatchEvent: jest.fn(),
     };
-  }),
+  }) as any,
 }); 

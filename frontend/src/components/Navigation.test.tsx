@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import { describe, it, expect, jest } from '@jest/globals';
 import '@testing-library/jest-dom';
 
@@ -22,11 +22,14 @@ describe('Navigation Component', () => {
     jest.clearAllMocks();
   });
 
-  it('renders all navigation links', () => {
+  it('renders all navigation links', async () => {
     // Mock the location for home page
     (useLocation as jest.Mock).mockReturnValue({ pathname: '/' });
     
-    render(<Navigation />);
+    // Wrap render in act
+    await act(async () => {
+      render(<Navigation />);
+    });
     
     // Check if the app title is rendered
     const title = screen.getByText('Fieldly');
@@ -42,11 +45,14 @@ describe('Navigation Component', () => {
     expect(uploadLink).toBeTruthy();
   });
   
-  it('sets correct active state based on current path for home', () => {
+  it('sets correct active state based on current path for home', async () => {
     // Mock the location for home page
     (useLocation as jest.Mock).mockReturnValue({ pathname: '/' });
     
-    render(<Navigation />);
+    // Wrap render in act
+    await act(async () => {
+      render(<Navigation />);
+    });
     
     // Check that the useLocation hook was called
     expect(useLocation).toHaveBeenCalled();
@@ -65,11 +71,14 @@ describe('Navigation Component', () => {
     expect(useLocation).toHaveReturnedWith({ pathname: '/' });
   });
   
-  it('sets correct active state based on current path for schemas', () => {
+  it('sets correct active state based on current path for schemas', async () => {
     // Mock the location for schemas page
     (useLocation as jest.Mock).mockReturnValue({ pathname: '/schemas' });
     
-    render(<Navigation />);
+    // Wrap render in act
+    await act(async () => {
+      render(<Navigation />);
+    });
     
     // Check that the useLocation hook was called
     expect(useLocation).toHaveBeenCalled();
