@@ -460,37 +460,33 @@ export default function SchemaManager() {
         schemas.map((schema) => (
           <Accordion key={schema.id} sx={{ mb: 1 }}>
             <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', pr: 2 }}>
-                <Typography>{schema.name}</Typography>
-                <Box sx={{ display: 'flex', ml: 2 }}>
-                  <Button 
-                    size="small" 
-                    startIcon={<EditIcon />} 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleStartEditing(schema);
-                    }}
-                    sx={{ mr: 1 }}
-                  >
-                    Edit
-                  </Button>
-                  <Button 
-                    size="small" 
-                    color="error"
-                    startIcon={<DeleteIcon />} 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (window.confirm(`Delete schema ${schema.name}?`)) {
-                        handleDeleteSchema(schema.id);
-                      }
-                    }}
-                  >
-                    Delete
-                  </Button>
-                </Box>
-              </Box>
+              <Typography>{schema.name}</Typography>
             </AccordionSummary>
             <AccordionDetails>
+              {/* Schema actions */}
+              <Box sx={{ display: 'flex', mb: 2 }}>
+                <Button 
+                  size="small" 
+                  startIcon={<EditIcon />} 
+                  onClick={() => handleStartEditing(schema)}
+                  sx={{ mr: 1 }}
+                >
+                  Edit
+                </Button>
+                <Button 
+                  size="small" 
+                  color="error"
+                  startIcon={<DeleteIcon />} 
+                  onClick={() => {
+                    if (window.confirm(`Delete schema ${schema.name}?`)) {
+                      handleDeleteSchema(schema.id);
+                    }
+                  }}
+                >
+                  Delete
+                </Button>
+              </Box>
+              
               {/* Schema content */}
               <ReactJson 
                 src={schema.schema} 
